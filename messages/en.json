@@ -30,6 +30,345 @@
       "bytes": "Bytes read",
       "rows": "{rows} rows",
       "verdict": "<b>{pct}%</b> of the bytes: the query names {cols} of {all} columns, so the other aisles were never opened."
+    },
+    "map": "World map"
+  },
+  "level": {
+    "map": "World map",
+    "levelLabel": "World {world} · Level {id}",
+    "progress": "Level progress",
+    "kind": {
+      "brief": "Lesson",
+      "watch": "Watch",
+      "predict": "Predict",
+      "task": "Your turn"
+    },
+    "mapping": "In the depot → in ClickHouse",
+    "breaks": "Where the metaphor breaks:",
+    "next": "Next",
+    "toCheck": "Start the recall check",
+    "watch": "Watch the depot…",
+    "watching": "Watching…",
+    "letsGo": "Let's go",
+    "objective": "Objective",
+    "reread": "Read the instructions again",
+    "taskDone": "Done!",
+    "chooseAbove": "Choose your answer above",
+    "answerWas": "The answer was {answer}.",
+    "yourAnswer": "Your answer",
+    "check": "Check",
+    "right": "Right!",
+    "notQuite": "Not quite.",
+    "checkTitle": "Recall check",
+    "noPeeking": "The depot is hidden on purpose: remembering it from memory is what makes it stick.",
+    "review": "Review",
+    "finish": "See results",
+    "stars": "{n} of 3 stars",
+    "passed": "Level complete!",
+    "almost": "Almost there",
+    "score": "{correct} of {total} correct",
+    "remedial": "You need 80% to unlock the next level. Try again: the questions change their numbers.",
+    "retryCheck": "Retry with new numbers",
+    "nextLevel": "Next",
+    "restart": "Restart level"
+  },
+  "panels": {
+    "reading": "What Pico read",
+    "noQuery": "No query yet. Pick columns and press Run.",
+    "boxes": "Boxes opened",
+    "bytes": "Bytes read",
+    "rows": "{rows} rows",
+    "tableSize": "Table on disk"
+  },
+  "tools": {
+    "insert": "Insert orders",
+    "run": "Run query",
+    "columns": "Columns to read",
+    "goal": "goal"
+  },
+  "stage": {
+    "dock": "Dock",
+    "rows": "{table} · by rows"
+  },
+  "levels": {
+    "1-1": {
+      "title": "Rows vs columns",
+      "summary": "Why reading one column of a row store means opening everything.",
+      "brief": {
+        "title": "The orders depot",
+        "body": "Hi! I'm Pico, the picker robot at Column Depot. We store millions of orders here: each one has a <b>date</b>, a <b>customer</b>, a <b>city</b> and a <b>total</b>. Right now we store them like most databases do: <b>by rows</b>. Every box holds whole orders, with their four values packed together. The coloured sticker on each box tells you which column it holds.",
+        "breaks": "A box isn't a real object: it's a chunk of a file on disk. “Opening” a box means reading it and decompressing it."
+      },
+      "map": {
+        "depot": "The depot",
+        "table": "a table",
+        "box": "A box",
+        "block": "a block of data on disk",
+        "sticker": "Its sticker",
+        "column": "the column it belongs to",
+        "pico": "Pico with a ticket",
+        "query": "a query",
+        "opened": "Boxes opened",
+        "read": "data read from disk"
+      },
+      "rowSum": {
+        "q": "A ticket arrives: add up every order's total. The boxes hold whole rows. How many of the {n} boxes will Pico have to open?",
+        "quarter": "A quarter: only the total ones",
+        "half": "Half of them",
+        "all": "All of them",
+        "why": "All of them. In a row store each order's total is packed next to its date, customer and city, so to add up one column you open everything."
+      },
+      "rotate": {
+        "title": "Let's rotate the depot",
+        "body": "Now we reorganise: every aisle will hold <b>a single column</b>. Watch every box fly to its aisle by its sticker. This is what ClickHouse does on disk: one file per column."
+      },
+      "colSum": {
+        "q": "Same ticket, same {total} boxes, now stored by column. How many boxes does Pico open to add up the totals?",
+        "why": "Only the {n} in the <b>total</b> aisle: the other aisles aren't even touched. That's a columnar database: each column in its own file, and a query reads only the columns it names."
+      },
+      "byCity": {
+        "title": "Revenue by city",
+        "body": "Your first ticket: revenue per city, <code>SELECT city, sum(total) … GROUP BY city</code>. Pick exactly the columns it needs and run it.",
+        "success": "Two aisles out of four, half the boxes. You only paid for what you asked for."
+      },
+      "check": {
+        "together": {
+          "q": "In a columnar database, what is stored together?",
+          "column": "All the values of one column",
+          "row": "All the values of one row",
+          "random": "Whatever arrived at the same time",
+          "why": "Each column lives in its own file, so a query can read just the columns it needs."
+        },
+        "files": {
+          "q": "A ClickHouse table has 100 columns. A query uses {n} of them. How many column files does it read?",
+          "why": "{n}: one file per column it names. The other columns are never opened."
+        },
+        "rowStore": {
+          "q": "A row store keeps whole rows in {n} boxes. You add up one column. How many boxes do you open?",
+          "why": "All {n}: every box has a bit of every column, so you can't read one column alone."
+        },
+        "shines": {
+          "q": "Which query does column storage make fast?",
+          "aggregate": "Add up one column over millions of rows",
+          "lookup": "Fetch one whole row by its id",
+          "update": "Change one field of one row",
+          "why": "Aggregating a few columns over many rows: you read only those columns. Fetching or updating single rows is what row stores are built for."
+        }
+      }
+    },
+    "1-2": {
+      "title": "Only what you ask for",
+      "summary": "The columns a query names decide the bytes it reads.",
+      "brief": {
+        "title": "Every column costs",
+        "body": "Now the depot is stored by column. The rule is simple: <b>a query reads only the columns it names</b>. Columns don't all weigh the same either: a long number takes more bytes than a short city code. The panel on the right counts the <b>bytes read</b>."
+      },
+      "star": {
+        "q": "Someone sends <code>SELECT *</code>. What share of the depot's bytes does Pico read?",
+        "p25": "25%",
+        "p50": "50%",
+        "p100": "100%",
+        "why": "100%: the star means every column, so Pico walks every aisle. <code>SELECT *</code> throws away the main advantage of a columnar database."
+      },
+      "lightest": {
+        "q": "Which one-column query reads the fewest bytes?",
+        "total": "SELECT total",
+        "customer_id": "SELECT customer_id",
+        "city": "SELECT city",
+        "why": "<code>city</code>: it's a <code>LowCardinality(String)</code>, a few cities repeated over and over, so on disk it's tiny. Same number of boxes, very different weight."
+      },
+      "daily": {
+        "title": "Daily sales",
+        "body": "Ticket: sales per day, <code>SELECT date, sum(total) … GROUP BY date</code>. Pick exactly its columns and run it.",
+        "success": "Date and total, nothing else. The other aisles stayed closed."
+      },
+      "unique": {
+        "title": "Unique customers per city",
+        "body": "Ticket: how many different customers each city has, <code>SELECT city, uniq(customer_id) … GROUP BY city</code>.",
+        "success": "Exactly the columns it needs. Watch the bytes: <code>customer_id</code> weighs much more than <code>city</code>."
+      },
+      "check": {
+        "star": {
+          "q": "<code>SELECT *</code> on a table with {n} columns: how many columns does it read?",
+          "why": "{n}: all of them. Name your columns."
+        },
+        "unnamed": {
+          "q": "What happens to the columns a query doesn't name?",
+          "never": "They're never read",
+          "skimmed": "They're skimmed quickly",
+          "always": "They're read and thrown away",
+          "why": "They're never opened: each column is a separate file on disk."
+        },
+        "pct": {
+          "q": "A query reads {read} of {of} columns that all weigh the same. What percentage of the bytes does it read?",
+          "why": "{read} of {of} = {pct}%."
+        },
+        "sizes": {
+          "q": "Do all columns weigh the same on disk?",
+          "differ": "No: it depends on the type and how well it compresses",
+          "same": "Yes, every column takes the same",
+          "rows": "Only the row count matters",
+          "why": "They differ: types have different sizes, and repetitive data compresses much better."
+        }
+      }
+    },
+    "1-3": {
+      "title": "Shrinking aisles",
+      "summary": "Each column is compressed on its own; sorting makes it shrink more.",
+      "brief": {
+        "title": "Squeeze every aisle",
+        "body": "Each column is compressed <b>on its own</b>. Values of the same column look alike, so they compress far better than mixed rows. And when equal values sit side by side (if the table is sorted by that column), they shrink even more. The ratios here are illustrative; the rule is real."
+      },
+      "squeeze": {
+        "title": "Compression",
+        "body": "Watch every aisle shrink. <code>city</code> has few distinct values and shrinks a lot; <code>total</code> barely changes, because almost every total is different."
+      },
+      "sortCity": {
+        "q": "If we sort the table by <code>city</code> (<code>ORDER BY city</code>), which aisle shrinks the most?",
+        "date": "date",
+        "customer_id": "customer_id",
+        "city": "city",
+        "total": "total",
+        "why": "<code>city</code>: all the Limas end up together, then all the Madrids… long runs of the same value compress almost to nothing."
+      },
+      "smallest": {
+        "title": "The smallest depot",
+        "body": "Try different <code>ORDER BY</code> columns and leave the one that makes the <b>whole table</b> smallest. Watch the total at the bottom of the panel.",
+        "success": "<code>customer_id</code> wins here: it was the column that compressed worst, so sorting it saves the most bytes. Choosing the ORDER BY is choosing what gets compressed, and (World 3) what gets read fast."
+      },
+      "check": {
+        "why": {
+          "q": "Why does a column compress better than a row?",
+          "alike": "Its values have the same type and look alike",
+          "smaller": "Columns are always shorter",
+          "magic": "ClickHouse uses a secret codec",
+          "why": "Similar values side by side: compressors love repetition."
+        },
+        "sorted": {
+          "q": "Sorting the table by a column makes that column…",
+          "more": "compress more",
+          "less": "compress less",
+          "same": "compress the same",
+          "why": "Equal values end up next to each other, forming long runs."
+        },
+        "codecSmall": {
+          "q": "ClickHouse 26.9, no CODEC clause: what does a freshly inserted {mb} MB part use?",
+          "why": "LZ4: since 26.9 parts under 100 MB use LZ4 and parts from 100 MB use ZSTD(3)."
+        },
+        "codecBig": {
+          "q": "ClickHouse 26.9, no CODEC clause: what does a {mb} MB merged part use?",
+          "why": "ZSTD(3): parts of 100 MB or more use ZSTD(3) since 26.9 (before, LZ4 everywhere; Cloud uses ZSTD)."
+        },
+        "codec": {
+          "lz4": "LZ4",
+          "zstd": "ZSTD(3)",
+          "none": "No compression"
+        }
+      }
+    },
+    "1-4": {
+      "title": "Analytics, not a ticket window",
+      "summary": "What ClickHouse is built for, and what it isn't.",
+      "brief": {
+        "title": "OLAP vs OLTP",
+        "body": "ClickHouse is an <b>analytical</b> (OLAP) database: it's built to scan and aggregate millions of rows over a few columns. A shop's checkout, a login or updating one order every second are <b>transactional</b> (OLTP) work: rows read and written one by one. For that, a database like Postgres is the right tool."
+      },
+      "lookup": {
+        "q": "A clerk asks for one whole order: <code>SELECT * … WHERE customer_id = 420</code>. In how many aisles does Pico have to open boxes?",
+        "why": "4: one whole row is spread over the 4 aisles, so Pico visits them all (and reads entire boxes of 8,192 rows to return one). A row store would open a single box. Single-row lookups are OLTP territory."
+      },
+      "yearly": {
+        "q": "The boss wants yearly revenue: <code>SELECT sum(total)</code>. What share of the boxes does Pico open?",
+        "p25": "25%",
+        "p50": "50%",
+        "p100": "100%",
+        "why": "25%: one aisle out of four, over every row. That's the kind of question ClickHouse answers in milliseconds."
+      },
+      "light": {
+        "title": "A featherweight report",
+        "body": "Orders per city and day: <code>SELECT …, count()</code> with <b>at least two columns</b> that reads <b>under 10%</b> of the bytes. Which pair is light enough?",
+        "success": "<code>date</code> and <code>city</code>: both repeat a lot and compress very well. Picking light columns is half of a fast report."
+      },
+      "real": {
+        "title": "The real thing",
+        "body": "This is the depot in real ClickHouse. <code>system.columns</code> tells you how much each column weighs on disk, compressed and uncompressed."
+      },
+      "check": {
+        "fits": {
+          "q": "Which workload fits ClickHouse best?",
+          "dashboard": "A dashboard aggregating billions of events",
+          "cart": "A shopping cart updated on every click",
+          "login": "Checking one user's password at login",
+          "why": "Aggregating huge amounts of data. Carts and logins read and write single rows: OLTP."
+        },
+        "oneRow": {
+          "q": "To read one whole row of a {n}-column table, how many column files does ClickHouse touch?",
+          "why": "{n}: the row is spread over every column file."
+        },
+        "minimum": {
+          "q": "What is the smallest amount ClickHouse reads from a column?",
+          "granule": "A granule (up to 8,192 rows)",
+          "row": "One row",
+          "file": "The whole file",
+          "why": "A granule: the index points to blocks of 8,192 rows, never to single rows. You'll see it in World 3."
+        },
+        "updates": {
+          "q": "You need to update one order's status every second. Where?",
+          "oltp": "In an OLTP database (e.g. Postgres)",
+          "clickhouse": "In ClickHouse, it's faster",
+          "either": "It doesn't matter",
+          "why": "In an OLTP database. ClickHouse parts are immutable; changing single rows is expensive (World 6)."
+        }
+      }
     }
+  },
+  "map": {
+    "home": "Home",
+    "world": "World {n}",
+    "prev": "Previous world",
+    "next": "Next world",
+    "replay": "Replay",
+    "playLevel": "Play {id}",
+    "worldLocked": "Finish World {n} to unlock",
+    "soon": "Coming soon",
+    "soonBody": "This warehouse is still under construction. More ClickHouse is on the way.",
+    "sandbox": {
+      "title": "Free depot"
+    },
+    "w1": {
+      "title": "Columns",
+      "body": "Why ClickHouse stores each column on its own: reading only what a query names, and why similar values side by side compress so well."
+    },
+    "w2": {
+      "title": "Inserts, parts & merges",
+      "body": "Every insert becomes an immutable part; background merges fuse them. Batching, async inserts and the famous “Too many parts”."
+    },
+    "w3": {
+      "title": "ORDER BY & the sparse index",
+      "body": "Granules of 8,192 rows, an index with one entry per granule, and why the order of your key decides how much gets read."
+    },
+    "w4": {
+      "title": "Partitions",
+      "body": "Separate halls for managing data: pruning, why partitions don't make queries faster, and the cheapest delete there is."
+    }
+  },
+  "code": {
+    "button": "Code",
+    "open": "Enter an unlock code",
+    "title": "Unlock code",
+    "body": "Got a code? Type it here.",
+    "label": "Code",
+    "redeem": "Redeem",
+    "bad": "That code doesn't work.",
+    "ok": "Unlocked! Every level complete with 3 stars.",
+    "close": "Close"
+  },
+  "landing": {
+    "kicker": "Learn ClickHouse · unofficial",
+    "headline": "Run the depot and learn how ClickHouse really stores and reads data.",
+    "start": "Start",
+    "credits": "3D art: Kenney (CC0). Music and sounds generated in code. Full credits in",
+    "madeBy": "Made by",
+    "github": "Source code on GitHub"
   }
 }

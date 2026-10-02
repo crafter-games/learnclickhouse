@@ -1,0 +1,15 @@
+{
+  "name": "m2-nav",
+  "path": "/es",
+  "viewport": [1440, 900],
+  "steps": [
+    { "wait": 5000 },
+    { "screenshot": "landing" },
+    { "press": "Enter" },
+    { "wait": 4500 },
+    { "screenshot": "map" },
+    { "press": "ArrowRight" },
+    { "wait": 2000 },
+    { "screenshot": "map-w2" }
+  ]
+}

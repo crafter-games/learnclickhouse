@@ -1,14 +1,16 @@
 import * as THREE from "three";
 import { CSS2DObject, CSS2DRenderer } from "three/examples/jsm/renderers/CSS2DRenderer.js";
-import type { Part, QueryResult, QuerySpec, Table } from "@/sim/table";
+import type { Part, QueryResult, Table } from "@/sim/table";
 import { materialsOf, model } from "./models";
 import { Pico, type Face } from "./pico";
 import { COLORS, COLUMN_COLORS } from "./theme";
 import { Tweens, easeInOutCubic, easeOutBack, easeOutCubic, wait } from "./tweens";
 
-// The warehouse (GDD → Verbos del almacén). World units: 1 shelf cell = 1 granule.
-// Aisles (columns) run along +x; each aisle has a roller rack with one box per granule and a
-// walkway in front of it (towards the camera) where Pico drives.
+// The warehouse (GDD → Verbos del almacén). World units: 1 shelf cell = 1 box.
+// Column layout: one aisle (rack line) per column, one box per granule.
+// Row layout (World 1's "before"): a single long rack where each granule's boxes sit side by side,
+// one per column — every box of a row block is stored together.
+// Racks run along +x; each rack has a walkway in front of it (towards the camera) for Pico.
 const AISLE = 2.25; // distance between racks
 const WALK = 1.12; // walkway offset in front of a rack (centre of the gap, clear of uprights)
 const START_X = 0; // first shelf cell
@@ -22,10 +24,14 @@ const WHITE = new THREE.Color(0xffffff);
 /** General shot: from the front, a little to the right and above. */
 const GENERAL_DIR = new THREE.Vector3(0.24, 0.74, 1).normalize();
 
+export type Layout = "rows" | "columns";
+
 export type StageLabels = {
   column: (name: string, type: string) => string;
   part: (name: string) => string;
   dock: string;
+  /** Tag of the single rack in the row layout. */
+  rows: string;
 };
 
 export type BoxSound = "read" | "skip" | "seal" | "land" | "truck";
@@ -36,8 +42,17 @@ export type StageOptions = {
 };
 
 type BoxState = "idle" | "read" | "skipped";
-type Box = { obj: THREE.Object3D; mats: THREE.MeshStandardMaterial[]; maps: (THREE.Texture | null)[]; state: BoxState; column: number; x: number };
-type Section = { part: Part; x0: number; width: number; boxes: Box[][]; tag: CSS2DObject; props: THREE.Object3D[] };
+type Box = {
+  granule: number;
+  column: number;
+  obj: THREE.Object3D;
+  mats: THREE.MeshStandardMaterial[];
+  maps: (THREE.Texture | null)[];
+  state: BoxState;
+  /** Visual size (compression), applied on top of squash animations. */
+  size: number;
+};
+type Section = { part: Part; x0: number; width: number; boxes: Box[]; tag: CSS2DObject; racks: THREE.Object3D[] };
 
 type Shot = { pos: THREE.Vector3; look: THREE.Vector3; off: { x: number; y: number } };
 
@@ -59,6 +74,8 @@ export class DepotStage {
   private pico = new Pico();
   private sections: Section[] = [];
   private aisleTags: HTMLElement[] = [];
+  private aisleProps: THREE.Object3D[] = [];
+  private rowTag: { obj: CSS2DObject; inner: HTMLElement } | null = null;
   private truck: THREE.Object3D | null = null;
   private frame = 0;
   private last = performance.now();
@@ -71,6 +88,7 @@ export class DepotStage {
   private follow = false;
   private busy = Promise.resolve();
   private deliveries = new Map<string, Promise<void>>();
+  private layout: Layout;
   readonly ready: Promise<void>;
 
   constructor(
@@ -79,6 +97,7 @@ export class DepotStage {
     private text: StageLabels,
     private options: StageOptions = {},
   ) {
+    this.layout = table.storage === "row" ? "rows" : "columns";
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
@@ -102,6 +121,16 @@ export class DepotStage {
     });
   }
 
+  /** Run one animation at a time, in order (deliveries, queries, layout changes). */
+  private queue(run: () => Promise<void>) {
+    const next = this.busy.then(async () => {
+      await this.ready;
+      if (!this.disposed) await run();
+    });
+    this.busy = next.catch(() => {});
+    return next;
+  }
+
   // ------------------------------------------------------------------ layout
 
   private get columns() {
@@ -110,14 +139,21 @@ export class DepotStage {
   private rackZ(c: number) {
     return c * AISLE;
   }
-  private walkZ(c: number) {
-    return this.rackZ(c) + WALK;
+  /** The rack line the row layout uses: a middle aisle. */
+  private get rowLine() {
+    return Math.floor((this.columns.length - 1) / 2);
+  }
+  private walkZ(line: number) {
+    return this.rackZ(line) + WALK;
   }
   private get frontZ() {
     return this.rackZ(this.columns.length - 1) + WALK + 1.4;
   }
   private get homePos() {
     return new THREE.Vector3(this.leftAisleX, 0, this.walkZ(this.columns.length - 1));
+  }
+  private get dockPos() {
+    return new THREE.Vector3(START_X - 5.2, 0, this.frontZ + 0.4);
   }
   /** Cross aisles: Pico only changes walkway along these, never across the racks. */
   private get leftAisleX() {
@@ -127,8 +163,17 @@ export class DepotStage {
     const last = this.sections[this.sections.length - 1];
     return (last ? last.x0 + last.width : START_X) + 0.9;
   }
-  private get dockPos() {
-    return new THREE.Vector3(START_X - 5.2, 0, this.frontZ + 0.4);
+  private sectionWidth(part: Part, layout = this.layout) {
+    return part.granules.length * (layout === "rows" ? this.columns.length : 1);
+  }
+  /** Rack line and x of a box in a layout. */
+  private slot(x0: number, granule: number, column: number, layout = this.layout) {
+    if (layout === "rows") return { line: this.rowLine, x: x0 + granule * this.columns.length + column + 0.5 };
+    return { line: column, x: x0 + granule + 0.5 };
+  }
+  private boxPos(x0: number, b: Box, layout = this.layout) {
+    const { line, x } = this.slot(x0, b.granule, b.column, layout);
+    return new THREE.Vector3(x, RACK_Y, this.rackZ(line));
   }
   private nextSectionX() {
     const last = this.sections[this.sections.length - 1];
@@ -150,19 +195,16 @@ export class DepotStage {
     sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.radius = 4;
     sun.shadow.bias = -0.0008;
-    Object.assign(sun.shadow.camera, { left: -16, right: 24, top: 16, bottom: -12, near: 1, far: 50 });
-    sun.target.position.set(6, 0, 3);
+    Object.assign(sun.shadow.camera, { left: -16, right: 30, top: 16, bottom: -12, near: 1, far: 50 });
+    sun.target.position.set(8, 0, 3);
     this.scene.add(sun, sun.target);
   }
 
   private async build() {
     const n = this.columns.length;
-    // Floor: a soft platform with painted tile joints (the Kenney floor tiles read too dark here)
-    const x0 = -9, x1 = 27, z0 = -2.2, z1 = this.frontZ + 2.6;
-    const slab = new THREE.Mesh(
-      new THREE.BoxGeometry(x1 - x0, 0.3, z1 - z0),
-      new THREE.MeshStandardMaterial({ color: 0xe6e2f2, roughness: 0.95 }),
-    );
+    // Floor: a soft platform with painted tile joints
+    const x0 = -9, x1 = 33, z0 = -2.2, z1 = this.frontZ + 2.6;
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.3, z1 - z0), new THREE.MeshStandardMaterial({ color: 0xe6e2f2, roughness: 0.95 }));
     slab.position.set((x0 + x1) / 2, -0.15, (z0 + z1) / 2);
     slab.receiveShadow = true;
     this.scene.add(slab);
@@ -187,7 +229,7 @@ export class DepotStage {
         }
     }
 
-    // Walkway stripes in front of each rack
+    // Walkway stripes in front of each rack line
     const stripeMat = new THREE.MeshStandardMaterial({ color: 0xf2c14e, roughness: 0.8 });
     for (let c = 0; c < n; c++) {
       const stripe = new THREE.Mesh(new THREE.BoxGeometry(x1 - START_X - 1, 0.01, 0.05), stripeMat);
@@ -195,17 +237,24 @@ export class DepotStage {
       this.scene.add(stripe);
     }
 
-    // Aisle signs: a yellow post with the column name
+    // Aisle signs: a yellow post with the column name (hidden in the row layout)
     const post = await model("factory", "structure-yellow-medium");
     this.columns.forEach((col, c) => {
       const p = post.clone();
       p.position.set(START_X - 1.0, 0, this.rackZ(c));
       this.scene.add(p);
+      this.aisleProps.push(p);
       const tag = label("aisle-tag", `<b style="background:${COLUMN_COLORS[c % COLUMN_COLORS.length]}"></b>${this.text.column(col.name, col.type)}`);
       tag.obj.position.set(START_X - 1.0, 1.25, this.rackZ(c));
       this.scene.add(tag.obj);
       this.aisleTags.push(tag.inner);
     });
+    const stripes = this.columns.map((_, c) => `<i style="background:${COLUMN_COLORS[c % COLUMN_COLORS.length]}"></i>`).join("");
+    const row = label("aisle-tag aisle-tag--rows", `<span class="stripes">${stripes}</span>${this.text.rows}`);
+    row.obj.position.set(START_X - 1.0, 1.25, this.rackZ(this.rowLine));
+    this.scene.add(row.obj);
+    this.rowTag = { obj: row.obj, inner: row.inner };
+    this.applyAisleSigns(false);
 
     // Dock: hopper + a sign; trucks park next to it
     const hopper = await model("factory", "hopper-high-square");
@@ -220,106 +269,122 @@ export class DepotStage {
     this.pico.root.rotation.y = Math.PI / 2;
     this.scene.add(this.pico.root);
 
-    // Parts that already exist (e.g. a level that starts with data)
+    // Parts that already exist (a level that starts with data)
     for (const part of this.table.activeParts) await this.addSection(part, false);
+  }
+
+  /** Column signs in the column layout, one "rows" sign in the row layout. */
+  private applyAisleSigns(animate: boolean) {
+    const rows = this.layout === "rows";
+    this.aisleTags.forEach((t) => (t.parentElement!.style.visibility = rows ? "hidden" : "visible"));
+    if (this.rowTag) (this.rowTag.obj.element as HTMLElement).style.visibility = rows ? "visible" : "hidden";
+    this.aisleProps.forEach((p, c) => {
+      const show = !rows || c === this.rowLine;
+      if (!animate) p.scale.setScalar(show ? 1 : 0.001);
+      else void this.tweens.to(p.scale, { x: show ? 1 : 0.001, y: show ? 1 : 0.001, z: show ? 1 : 0.001 }, 300, show ? easeOutBack : easeInOutCubic);
+    });
   }
 
   // ------------------------------------------------------------------ sections (parts)
 
+  /** Rollers + uprights for a section in the current layout. */
+  private async buildRacks(x0: number, width: number) {
+    const [rollers, upright] = await Promise.all([model("factory", "conveyor-bars-high"), model("factory", "structure-yellow-short")]);
+    const lines = this.layout === "rows" ? [this.rowLine] : this.columns.map((_, c) => c);
+    const racks: THREE.Object3D[] = [];
+    for (const line of lines) {
+      for (let i = 0; i < width; i++) {
+        const r = rollers.clone();
+        r.position.set(x0 + i + 0.5, 0, this.rackZ(line));
+        racks.push(r);
+      }
+      // Section uprights at both ends: the part is sealed
+      for (const ux of [x0 + 0.02, x0 + width - 0.02]) {
+        const u = upright.clone();
+        u.position.set(ux, 0, this.rackZ(line));
+        racks.push(u);
+      }
+    }
+    for (const r of racks) this.scene.add(r);
+    return racks;
+  }
+
   private async addSection(part: Part, animate: boolean) {
     const x0 = this.nextSectionX();
-    const width = part.granules.length;
-    const [boxModel, rollers, upright] = await Promise.all([model("factory", "box-small"), model("factory", "conveyor-bars-high"), model("factory", "structure-yellow-short")]);
-    const props: THREE.Object3D[] = [];
-    const boxes: Box[][] = [];
-    for (let c = 0; c < this.columns.length; c++) {
-      const row: Box[] = [];
-      for (let g = 0; g < width; g++) {
-        const x = x0 + g + 0.5;
-        const r = rollers.clone();
-        r.position.set(x, 0, this.rackZ(c));
-        this.scene.add(r);
-        props.push(r);
+    const width = this.sectionWidth(part);
+    const boxModel = await model("factory", "box-small");
+    const racks = await this.buildRacks(x0, width);
+    const boxes: Box[] = [];
+    for (let g = 0; g < part.granules.length; g++)
+      for (let c = 0; c < this.columns.length; c++) {
         const obj = boxModel.clone(true);
         obj.traverse((o) => {
           const mesh = o as THREE.Mesh;
           if (mesh.isMesh) mesh.material = (mesh.material as THREE.Material).clone();
         });
-        obj.position.set(x, RACK_Y, this.rackZ(c));
+        // A sticker in the column's colour on the front face: which column this box holds
+        const sticker = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.18), new THREE.MeshStandardMaterial({ color: COLUMN_COLORS[c % COLUMN_COLORS.length], roughness: 0.6 }));
+        sticker.position.set(0, 0.3, 0.256);
+        obj.add(sticker);
         obj.rotation.y = (((g * 7 + c * 3) % 5) - 2) * 0.03;
+        const mats = materialsOf(obj).filter((m) => m !== sticker.material);
+        const box: Box = { granule: g, column: c, obj, mats, maps: mats.map((m) => m.map), state: "idle", size: 1 };
+        obj.position.copy(this.boxPos(x0, box));
         this.scene.add(obj);
-        const mats = materialsOf(obj);
-        row.push({ obj, mats, maps: mats.map((m) => m.map), state: "idle", column: c, x });
+        boxes.push(box);
       }
-      // Section uprights at both ends: the part is sealed
-      for (const ux of [x0 + 0.02, x0 + width - 0.02]) {
-        const u = upright.clone();
-        u.position.set(ux, 0, this.rackZ(c));
-        this.scene.add(u);
-        props.push(u);
-      }
-      boxes.push(row);
-    }
     const tag = label("part-tag", this.text.part(part.name));
     tag.obj.position.set(x0 + width / 2, 0.05, this.frontZ - 0.55);
     this.scene.add(tag.obj);
-    const section: Section = { part, x0, width, boxes, tag: tag.obj, props };
+    const section: Section = { part, x0, width, boxes, tag: tag.obj, racks };
     this.sections.push(section);
 
     if (!animate) return section;
     // Everything starts hidden; the truck delivers it
-    for (const p of props) p.scale.setScalar(0.001);
-    for (const row of boxes) for (const b of row) b.obj.visible = false;
+    for (const r of racks) r.scale.setScalar(0.001);
+    for (const b of boxes) b.obj.visible = false;
     tag.outer.style.visibility = "hidden";
     return section;
   }
 
   /** A truck backs into the dock, its boxes fly to their shelves, the section is sealed. */
   deliver(part: Part): Promise<void> {
-    // The canvas (sim event) and the desk (await) both ask for the same delivery
+    // The canvas (sim event) and a level script (await) can both ask for the same delivery
     const pending = this.deliveries.get(part.name);
     if (pending) return pending;
-    const run = async () => {
-      await this.ready;
+    const next = this.queue(async () => {
       const section = await this.addSection(part, true);
       this.refit();
       const truck = await this.driveTruckIn();
-      // Racks and uprights grow in
-      void Promise.all(section.props.map((p, i) => wait(i * 8).then(() => this.tweens.to(p.scale, { x: 1, y: 1, z: 1 }, 260, easeOutBack))));
-      // Boxes fly from the truck to their cells, column by column
+      void Promise.all(section.racks.map((p, i) => wait(i * 8).then(() => this.tweens.to(p.scale, { x: 1, y: 1, z: 1 }, 260, easeOutBack))));
       const from = truck.position.clone().add(new THREE.Vector3(0.6, 1.1, 0));
-      const flights: Promise<void>[] = [];
-      let i = 0;
-      for (const row of section.boxes)
-        for (const b of row) {
-          const delay = i++ * 55;
-          flights.push(
-            wait(delay).then(async () => {
-              const to = b.obj.position.clone();
-              b.obj.visible = true;
-              b.obj.position.copy(from);
-              await this.tweens.progress(520, (p) => {
-                b.obj.position.lerpVectors(from, to, p);
-                b.obj.position.y += Math.sin(Math.PI * p) * 1.6;
-              });
-              b.obj.position.copy(to);
-              this.options.onSound?.("land", i);
-              void this.squash(b.obj);
-            }),
-          );
-        }
-      await Promise.all(flights);
-      // Seal: the part's name tag stamps in
+      await Promise.all(
+        section.boxes.map((b, i) =>
+          wait(i * 55).then(async () => {
+            const to = this.boxPos(section.x0, b);
+            b.obj.visible = true;
+            await this.fly(b, from, to);
+            this.options.onSound?.("land", i);
+            void this.squash(b);
+          }),
+        ),
+      );
       const tagEl = section.tag.element as HTMLElement;
       tagEl.style.visibility = "visible";
       tagEl.firstElementChild?.classList.add("is-new");
       this.options.onSound?.("seal");
       void this.driveTruckOut(truck);
-    };
-    const next = this.busy.then(run);
-    this.busy = next.catch(() => {});
+    });
     this.deliveries.set(part.name, next);
     return next;
+  }
+
+  private async fly(b: Box, from: THREE.Vector3, to: THREE.Vector3, ms = 520, arc = 1.6) {
+    await this.tweens.progress(ms, (p) => {
+      b.obj.position.lerpVectors(from, to, p);
+      b.obj.position.y += Math.sin(Math.PI * p) * arc;
+    });
+    b.obj.position.copy(to);
   }
 
   private async driveTruckIn() {
@@ -344,9 +409,76 @@ export class DepotStage {
     truck.visible = false;
   }
 
-  private async squash(obj: THREE.Object3D) {
-    obj.scale.set(1.15, 0.85, 1.15);
-    await this.tweens.to(obj.scale, { x: 1, y: 1, z: 1 }, 160, easeOutBack);
+  private async squash(b: Box) {
+    const s = b.size;
+    b.obj.scale.set(1.15 * s, 0.85 * s, 1.15 * s);
+    await this.tweens.to(b.obj.scale, { x: s, y: s, z: s }, 160, easeOutBack);
+  }
+
+  /**
+   * "Rotate the table": every box flies to its slot in the other layout, racks are rebuilt and the
+   * signs swap (World 1-1's cinematic).
+   */
+  setLayout(layout: Layout, animate = true): Promise<void> {
+    return this.queue(async () => {
+      if (layout === this.layout) return;
+      const old = this.sections.map((s) => ({ ...s }));
+      this.layout = layout;
+      this.resetBoxStates();
+      // New section offsets in the new layout
+      let x = START_X;
+      for (const s of this.sections) {
+        s.x0 = x;
+        s.width = this.sectionWidth(s.part);
+        x += s.width + SECTION_GAP;
+      }
+      // Old racks shrink away, new ones grow in
+      for (const o of old) for (const r of o.racks) void this.tweens.to(r.scale, { x: 0.001, y: 0.001, z: 0.001 }, animate ? 260 : 1).then(() => this.scene.remove(r));
+      for (const s of this.sections) {
+        s.racks = await this.buildRacks(s.x0, s.width);
+        for (const r of s.racks) r.scale.setScalar(animate ? 0.001 : 1);
+        s.tag.position.set(s.x0 + s.width / 2, 0.05, this.frontZ - 0.55);
+      }
+      this.applyAisleSigns(animate);
+      this.refit();
+      if (!animate) {
+        for (const s of this.sections) for (const b of s.boxes) b.obj.position.copy(this.boxPos(s.x0, b));
+        return;
+      }
+      await wait(200);
+      for (const s of this.sections) s.racks.forEach((r, i) => void wait(i * 6).then(() => this.tweens.to(r.scale, { x: 1, y: 1, z: 1 }, 280, easeOutBack)));
+      let i = 0;
+      const flights: Promise<void>[] = [];
+      // Fly column by column so the player sees each column gather into its aisle
+      for (let c = 0; c < this.columns.length; c++)
+        for (const s of this.sections)
+          for (const b of s.boxes.filter((bx) => bx.column === c)) {
+            const delay = i++ * 110;
+            flights.push(
+              wait(delay).then(async () => {
+                await this.fly(b, b.obj.position.clone(), this.boxPos(s.x0, b), 950, 1.8);
+                this.options.onSound?.("land", i);
+                void this.squash(b);
+              }),
+            );
+          }
+      await Promise.all(flights);
+    });
+  }
+
+  /** Box size per column (e.g. compressed / uncompressed), animated. 1 = full size. */
+  setColumnSizes(sizes: Record<string, number>) {
+    return this.queue(async () => {
+      const all: Promise<void>[] = [];
+      for (const s of this.sections)
+        for (const b of s.boxes) {
+          const size = sizes[this.columns[b.column].name];
+          if (size === undefined || Math.abs(size - b.size) < 0.001) continue;
+          b.size = size;
+          all.push(this.tweens.to(b.obj.scale, { x: size, y: size, z: size }, 450, easeOutBack));
+        }
+      await Promise.all(all);
+    });
   }
 
   // ------------------------------------------------------------------ reading (queries)
@@ -365,59 +497,66 @@ export class DepotStage {
     });
   }
 
+  private resetBoxStates() {
+    for (const s of this.sections) for (const b of s.boxes) this.setBox(b, "idle");
+    for (const t of this.aisleTags) t.classList.remove("is-dim", "is-on");
+    this.rowTag?.inner.classList.remove("is-on");
+  }
+
   /** Back to the idle look (every box closed and coloured). */
   resetBoxes() {
-    for (const s of this.sections) for (const row of s.boxes) for (const b of row) this.setBox(b, "idle");
-    for (const t of this.aisleTags) t.classList.remove("is-dim", "is-on");
+    return this.queue(async () => this.resetBoxStates());
   }
 
-  private boxFor(result: QueryResult, partName: string, granule: number, column: string) {
-    return result.boxes.find((b) => b.part === partName && b.granule === granule && b.column === column);
-  }
-
-  /** Pico walks only the aisles of the columns the query reads, opening only the granules it needs. */
-  playQuery(spec: QuerySpec, result: QueryResult): Promise<void> {
-    const run = async () => {
-      await this.ready;
-      this.resetBoxes();
-      const readCols = this.columns.map((c, i) => ({ c, i })).filter(({ c }) => result.boxes.some((b) => b.column === c.name && b.read));
-      // Aisles nobody visits fade out at once: a whole column file is never opened
-      this.columns.forEach((col, c) => {
-        const visited = readCols.some((r) => r.i === c);
-        this.aisleTags[c].classList.toggle("is-dim", !visited);
-        this.aisleTags[c].classList.toggle("is-on", visited);
-        if (visited) return;
-        for (const s of this.sections) for (const b of s.boxes[c]) this.setBox(b, "skipped");
-      });
-      this.options.onSound?.("skip");
+  /** Pico walks only the racks holding boxes the query reads, opening only those boxes. */
+  playQuery(result: QueryResult): Promise<void> {
+    return this.queue(async () => {
+      this.resetBoxStates();
+      const isRead = new Set(result.boxes.filter((b) => b.read).map((b) => `${b.part}/${b.granule}/${b.column}`));
+      const readOf = (s: Section, b: Box) => isRead.has(`${s.part.name}/${b.granule}/${this.columns[b.column].name}`);
+      // Rack lines with something to read, in front-to-back order
+      const lines = [...new Set(this.sections.flatMap((s) => s.boxes.filter((b) => readOf(s, b)).map((b) => this.slot(s.x0, b.granule, b.column).line)))].sort((a, b) => a - b);
+      if (this.layout === "columns")
+        this.columns.forEach((_, c) => {
+          const visited = lines.includes(c);
+          this.aisleTags[c].classList.toggle("is-dim", !visited);
+          this.aisleTags[c].classList.toggle("is-on", visited);
+          // Aisles nobody visits fade out at once: a whole column file is never opened
+          if (!visited) for (const s of this.sections) for (const b of s.boxes) if (b.column === c) this.setBox(b, "skipped");
+        });
+      else this.rowTag?.inner.classList.add("is-on");
+      if (this.layout === "columns" && lines.length < this.columns.length) this.options.onSound?.("skip");
       this.pico.setFace("focus");
       this.follow = true;
       await wait(250);
 
       // Zig-zag like a real picker: one aisle left → right, the next one back
       let forward = true;
-      for (const { c: col, i: c } of readCols) {
-        const cells = this.sections.flatMap((s) => s.boxes[c].map((b, g) => ({ s, b, g })));
+      for (const line of lines) {
+        const cells = this.sections
+          .flatMap((s) => s.boxes.map((b) => ({ s, b, ...this.slot(s.x0, b.granule, b.column) })))
+          .filter((x) => x.line === line)
+          .sort((a, b) => a.x - b.x);
         if (!forward) cells.reverse();
-        await this.travel(new THREE.Vector3(forward ? START_X - 0.6 : this.rightAisleX - 0.5, 0, this.walkZ(c)));
-        for (const { s, b, g } of cells) {
-          await this.driveTo(new THREE.Vector3(b.x, 0, this.walkZ(c)), true);
-          const read = this.boxFor(result, s.part.name, g, col.name)?.read ?? false;
-          if (read) {
+        await this.travel(new THREE.Vector3(forward ? START_X - 0.6 : this.rightAisleX - 0.5, 0, this.walkZ(line)));
+        let k = 0;
+        for (const { s, b, x } of cells) {
+          await this.driveTo(new THREE.Vector3(x, 0, this.walkZ(line)), true);
+          if (readOf(s, b)) {
             this.setBox(b, "read");
             this.pico.flash(true);
-            this.options.onSound?.("read", g);
-            void this.tweens.to(b.obj.position, { y: RACK_Y + 0.22 }, 110, easeOutCubic).then(() => this.tweens.to(b.obj.position, { y: RACK_Y }, 180, easeOutBack));
+            this.options.onSound?.("read", k++);
+            const y = b.obj.position.y;
+            void this.tweens.to(b.obj.position, { y: y + 0.22 }, 110, easeOutCubic).then(() => this.tweens.to(b.obj.position, { y }, 180, easeOutBack));
             await wait(140);
             this.pico.flash(false);
           } else {
             this.setBox(b, "skipped");
-            this.options.onSound?.("skip", g);
+            this.options.onSound?.("skip", k);
             await wait(40);
           }
         }
-        // Out of the aisle on the far side
-        await this.driveTo(new THREE.Vector3(forward ? this.rightAisleX : this.leftAisleX, 0, this.walkZ(c)), true);
+        await this.driveTo(new THREE.Vector3(forward ? this.rightAisleX : this.leftAisleX, 0, this.walkZ(line)), true);
         forward = !forward;
       }
       this.pico.setFace(result.boxesRead <= result.boxesTotal / 4 ? "happy" : "wow");
@@ -425,11 +564,7 @@ export class DepotStage {
       await this.tweens.to(this.pico.root.rotation, { y: Math.PI / 2 }, 200, easeInOutCubic);
       this.follow = false;
       this.refit();
-      void spec;
-    };
-    const next = this.busy.then(run);
-    this.busy = next.catch(() => {});
-    return next;
+    });
   }
 
   setFace(face: Face) {

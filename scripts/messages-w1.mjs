@@ -1,0 +1,416 @@
+// One-off helper: merges the M2 UI strings and World 1 copy into messages/{en,es}.json.
+// Kept in the repo so the copy has a readable source; rerunning overwrites the same keys.
+import { readFileSync, writeFileSync } from "node:fs";
+
+const ui = {
+  en: {
+    level: {
+      map: "World map",
+      levelLabel: "World {world} · Level {id}",
+      progress: "Level progress",
+      kind: { brief: "Lesson", watch: "Watch", predict: "Predict", task: "Your turn" },
+      mapping: "In the depot → in ClickHouse",
+      breaks: "Where the metaphor breaks:",
+      next: "Next",
+      toCheck: "Start the recall check",
+      watch: "Watch the depot…",
+      watching: "Watching…",
+      letsGo: "Let's go",
+      objective: "Objective",
+      reread: "Read the instructions again",
+      taskDone: "Done!",
+      chooseAbove: "Choose your answer above",
+      answerWas: "The answer was {answer}.",
+      yourAnswer: "Your answer",
+      check: "Check",
+      right: "Right!",
+      notQuite: "Not quite.",
+      checkTitle: "Recall check",
+      noPeeking: "The depot is hidden on purpose: remembering it from memory is what makes it stick.",
+      review: "Review",
+      finish: "See results",
+      stars: "{n} of 3 stars",
+      passed: "Level complete!",
+      almost: "Almost there",
+      score: "{correct} of {total} correct",
+      remedial: "You need 80% to unlock the next level. Try again: the questions change their numbers.",
+      retryCheck: "Retry with new numbers",
+      nextLevel: "Next",
+      restart: "Restart level",
+    },
+    panels: {
+      reading: "What Pico read",
+      noQuery: "No query yet. Pick columns and press Run.",
+      boxes: "Boxes opened",
+      bytes: "Bytes read",
+      rows: "{rows} rows",
+      tableSize: "Table on disk",
+    },
+    tools: { insert: "Insert orders", run: "Run query", columns: "Columns to read", goal: "goal" },
+    stage: { dock: "Dock", rows: "{table} · by rows" },
+  },
+  es: {
+    level: {
+      map: "Mapa del mundo",
+      levelLabel: "Mundo {world} · Nivel {id}",
+      progress: "Progreso del nivel",
+      kind: { brief: "Lección", watch: "Observa", predict: "Predice", task: "Tu turno" },
+      mapping: "En el almacén → en ClickHouse",
+      breaks: "Dónde falla la metáfora:",
+      next: "Siguiente",
+      toCheck: "Empezar el repaso",
+      watch: "Mira el almacén…",
+      watching: "Mirando…",
+      letsGo: "¡Vamos!",
+      objective: "Objetivo",
+      reread: "Volver a leer las instrucciones",
+      taskDone: "¡Hecho!",
+      chooseAbove: "Elige tu respuesta arriba",
+      answerWas: "La respuesta era {answer}.",
+      yourAnswer: "Tu respuesta",
+      check: "Comprobar",
+      right: "¡Correcto!",
+      notQuite: "No del todo.",
+      checkTitle: "Repaso de memoria",
+      noPeeking: "El almacén se oculta a propósito: recordar de memoria es lo que hace que se quede.",
+      review: "Repaso",
+      finish: "Ver resultados",
+      stars: "{n} de 3 estrellas",
+      passed: "¡Nivel completado!",
+      almost: "Casi lo logras",
+      score: "{correct} de {total} correctas",
+      remedial: "Necesitas 80% para desbloquear el siguiente nivel. Inténtalo otra vez: las preguntas cambian sus números.",
+      retryCheck: "Reintentar con números nuevos",
+      nextLevel: "Siguiente",
+      restart: "Reiniciar nivel",
+    },
+    panels: {
+      reading: "Lo que leyó Pico",
+      noQuery: "Aún no hay consulta. Elige columnas y pulsa Ejecutar.",
+      boxes: "Cajas abiertas",
+      bytes: "Bytes leídos",
+      rows: "{rows} filas",
+      tableSize: "Tabla en disco",
+    },
+    tools: { insert: "Insertar pedidos", run: "Ejecutar consulta", columns: "Columnas que se leen", goal: "objetivo" },
+    stage: { dock: "Muelle", rows: "{table} · por filas" },
+  },
+};
+
+const w1 = {
+  en: {
+    "1-1": {
+      title: "Rows vs columns",
+      summary: "Why reading one column of a row store means opening everything.",
+      brief: {
+        title: "The orders depot",
+        body: "Hi! I'm Pico, the picker robot at Column Depot. We store millions of orders here: each one has a <b>date</b>, a <b>customer</b>, a <b>city</b> and a <b>total</b>. Right now we store them like most databases do: <b>by rows</b>. Every box holds whole orders, with their four values packed together. The coloured sticker on each box tells you which column it holds.",
+        breaks: "A box isn't a real object: it's a chunk of a file on disk. “Opening” a box means reading it and decompressing it.",
+      },
+      map: {
+        depot: "The depot",
+        table: "a table",
+        box: "A box",
+        block: "a block of data on disk",
+        sticker: "Its sticker",
+        column: "the column it belongs to",
+        pico: "Pico with a ticket",
+        query: "a query",
+        opened: "Boxes opened",
+        read: "data read from disk",
+      },
+      rowSum: {
+        q: "A ticket arrives: add up every order's total. The boxes hold whole rows. How many of the {n} boxes will Pico have to open?",
+        quarter: "A quarter: only the total ones",
+        half: "Half of them",
+        all: "All of them",
+        why: "All of them. In a row store each order's total is packed next to its date, customer and city, so to add up one column you open everything.",
+      },
+      rotate: {
+        title: "Let's rotate the depot",
+        body: "Now we reorganise: every aisle will hold <b>a single column</b>. Watch every box fly to its aisle by its sticker. This is what ClickHouse does on disk: one file per column.",
+      },
+      colSum: {
+        q: "Same ticket, same {total} boxes, now stored by column. How many boxes does Pico open to add up the totals?",
+        why: "Only the {n} in the <b>total</b> aisle: the other aisles aren't even touched. That's a columnar database: each column in its own file, and a query reads only the columns it names.",
+      },
+      byCity: {
+        title: "Revenue by city",
+        body: "Your first ticket: revenue per city, <code>SELECT city, sum(total) … GROUP BY city</code>. Pick exactly the columns it needs and run it.",
+        success: "Two aisles out of four, half the boxes. You only paid for what you asked for.",
+      },
+      check: {
+        together: { q: "In a columnar database, what is stored together?", column: "All the values of one column", row: "All the values of one row", random: "Whatever arrived at the same time", why: "Each column lives in its own file, so a query can read just the columns it needs." },
+        files: { q: "A ClickHouse table has 100 columns. A query uses {n} of them. How many column files does it read?", why: "{n}: one file per column it names. The other columns are never opened." },
+        rowStore: { q: "A row store keeps whole rows in {n} boxes. You add up one column. How many boxes do you open?", why: "All {n}: every box has a bit of every column, so you can't read one column alone." },
+        shines: { q: "Which query does column storage make fast?", aggregate: "Add up one column over millions of rows", lookup: "Fetch one whole row by its id", update: "Change one field of one row", why: "Aggregating a few columns over many rows: you read only those columns. Fetching or updating single rows is what row stores are built for." },
+      },
+    },
+    "1-2": {
+      title: "Only what you ask for",
+      summary: "The columns a query names decide the bytes it reads.",
+      brief: {
+        title: "Every column costs",
+        body: "Now the depot is stored by column. The rule is simple: <b>a query reads only the columns it names</b>. Columns don't all weigh the same either: a long number takes more bytes than a short city code. The panel on the right counts the <b>bytes read</b>.",
+      },
+      star: {
+        q: "Someone sends <code>SELECT *</code>. What share of the depot's bytes does Pico read?",
+        p25: "25%",
+        p50: "50%",
+        p100: "100%",
+        why: "100%: the star means every column, so Pico walks every aisle. <code>SELECT *</code> throws away the main advantage of a columnar database.",
+      },
+      lightest: {
+        q: "Which one-column query reads the fewest bytes?",
+        total: "SELECT total",
+        customer_id: "SELECT customer_id",
+        city: "SELECT city",
+        why: "<code>city</code>: it's a <code>LowCardinality(String)</code>, a few cities repeated over and over, so on disk it's tiny. Same number of boxes, very different weight.",
+      },
+      daily: {
+        title: "Daily sales",
+        body: "Ticket: sales per day, <code>SELECT date, sum(total) … GROUP BY date</code>. Pick exactly its columns and run it.",
+        success: "Date and total, nothing else. The other aisles stayed closed.",
+      },
+      unique: {
+        title: "Unique customers per city",
+        body: "Ticket: how many different customers each city has, <code>SELECT city, uniq(customer_id) … GROUP BY city</code>.",
+        success: "Exactly the columns it needs. Watch the bytes: <code>customer_id</code> weighs much more than <code>city</code>.",
+      },
+      check: {
+        star: { q: "<code>SELECT *</code> on a table with {n} columns: how many columns does it read?", why: "{n}: all of them. Name your columns." },
+        unnamed: { q: "What happens to the columns a query doesn't name?", never: "They're never read", skimmed: "They're skimmed quickly", always: "They're read and thrown away", why: "They're never opened: each column is a separate file on disk." },
+        pct: { q: "A query reads {read} of {of} columns that all weigh the same. What percentage of the bytes does it read?", why: "{read} of {of} = {pct}%." },
+        sizes: { q: "Do all columns weigh the same on disk?", differ: "No: it depends on the type and how well it compresses", same: "Yes, every column takes the same", rows: "Only the row count matters", why: "They differ: types have different sizes, and repetitive data compresses much better." },
+      },
+    },
+    "1-3": {
+      title: "Shrinking aisles",
+      summary: "Each column is compressed on its own; sorting makes it shrink more.",
+      brief: {
+        title: "Squeeze every aisle",
+        body: "Each column is compressed <b>on its own</b>. Values of the same column look alike, so they compress far better than mixed rows. And when equal values sit side by side (if the table is sorted by that column), they shrink even more. The ratios here are illustrative; the rule is real.",
+      },
+      squeeze: {
+        title: "Compression",
+        body: "Watch every aisle shrink. <code>city</code> has few distinct values and shrinks a lot; <code>total</code> barely changes, because almost every total is different.",
+      },
+      sortCity: {
+        q: "If we sort the table by <code>city</code> (<code>ORDER BY city</code>), which aisle shrinks the most?",
+        date: "date",
+        customer_id: "customer_id",
+        city: "city",
+        total: "total",
+        why: "<code>city</code>: all the Limas end up together, then all the Madrids… long runs of the same value compress almost to nothing.",
+      },
+      smallest: {
+        title: "The smallest depot",
+        body: "Try different <code>ORDER BY</code> columns and leave the one that makes the <b>whole table</b> smallest. Watch the total at the bottom of the panel.",
+        success: "<code>customer_id</code> wins here: it was the column that compressed worst, so sorting it saves the most bytes. Choosing the ORDER BY is choosing what gets compressed, and (World 3) what gets read fast.",
+      },
+      check: {
+        why: { q: "Why does a column compress better than a row?", alike: "Its values have the same type and look alike", smaller: "Columns are always shorter", magic: "ClickHouse uses a secret codec", why: "Similar values side by side: compressors love repetition." },
+        sorted: { q: "Sorting the table by a column makes that column…", more: "compress more", less: "compress less", same: "compress the same", why: "Equal values end up next to each other, forming long runs." },
+        codecSmall: { q: "ClickHouse 26.9, no CODEC clause: what does a freshly inserted {mb} MB part use?", why: "LZ4: since 26.9 parts under 100 MB use LZ4 and parts from 100 MB use ZSTD(3)." },
+        codecBig: { q: "ClickHouse 26.9, no CODEC clause: what does a {mb} MB merged part use?", why: "ZSTD(3): parts of 100 MB or more use ZSTD(3) since 26.9 (before, LZ4 everywhere; Cloud uses ZSTD)." },
+        codec: { lz4: "LZ4", zstd: "ZSTD(3)", none: "No compression" },
+      },
+    },
+    "1-4": {
+      title: "Analytics, not a ticket window",
+      summary: "What ClickHouse is built for, and what it isn't.",
+      brief: {
+        title: "OLAP vs OLTP",
+        body: "ClickHouse is an <b>analytical</b> (OLAP) database: it's built to scan and aggregate millions of rows over a few columns. A shop's checkout, a login or updating one order every second are <b>transactional</b> (OLTP) work: rows read and written one by one. For that, a database like Postgres is the right tool.",
+      },
+      lookup: {
+        q: "A clerk asks for one whole order: <code>SELECT * … WHERE customer_id = 420</code>. In how many aisles does Pico have to open boxes?",
+        why: "4: one whole row is spread over the 4 aisles, so Pico visits them all (and reads entire boxes of 8,192 rows to return one). A row store would open a single box. Single-row lookups are OLTP territory.",
+      },
+      yearly: {
+        q: "The boss wants yearly revenue: <code>SELECT sum(total)</code>. What share of the boxes does Pico open?",
+        p25: "25%",
+        p50: "50%",
+        p100: "100%",
+        why: "25%: one aisle out of four, over every row. That's the kind of question ClickHouse answers in milliseconds.",
+      },
+      light: {
+        title: "A featherweight report",
+        body: "Orders per city and day: <code>SELECT …, count()</code> with <b>at least two columns</b> that reads <b>under 10%</b> of the bytes. Which pair is light enough?",
+        success: "<code>date</code> and <code>city</code>: both repeat a lot and compress very well. Picking light columns is half of a fast report.",
+      },
+      real: {
+        title: "The real thing",
+        body: "This is the depot in real ClickHouse. <code>system.columns</code> tells you how much each column weighs on disk, compressed and uncompressed.",
+      },
+      check: {
+        fits: { q: "Which workload fits ClickHouse best?", dashboard: "A dashboard aggregating billions of events", cart: "A shopping cart updated on every click", login: "Checking one user's password at login", why: "Aggregating huge amounts of data. Carts and logins read and write single rows: OLTP." },
+        oneRow: { q: "To read one whole row of a {n}-column table, how many column files does ClickHouse touch?", why: "{n}: the row is spread over every column file." },
+        minimum: { q: "What is the smallest amount ClickHouse reads from a column?", granule: "A granule (up to 8,192 rows)", row: "One row", file: "The whole file", why: "A granule: the index points to blocks of 8,192 rows, never to single rows. You'll see it in World 3." },
+        updates: { q: "You need to update one order's status every second. Where?", oltp: "In an OLTP database (e.g. Postgres)", clickhouse: "In ClickHouse, it's faster", either: "It doesn't matter", why: "In an OLTP database. ClickHouse parts are immutable; changing single rows is expensive (World 6)." },
+      },
+    },
+  },
+  es: {
+    "1-1": {
+      title: "Filas contra columnas",
+      summary: "Por qué leer una columna de un almacén por filas obliga a abrirlo todo.",
+      brief: {
+        title: "El almacén de pedidos",
+        body: "¡Hola! Soy Pico, el robot recolector de Column Depot. Aquí guardamos millones de pedidos: cada uno tiene <b>fecha</b>, <b>cliente</b>, <b>ciudad</b> y <b>total</b>. Ahora mismo los guardamos como casi todas las bases de datos: <b>por filas</b>. Cada caja lleva pedidos completos, con sus cuatro valores juntos. La pegatina de color de cada caja dice qué columna guarda.",
+        breaks: "Una caja no es un objeto real: es un trozo de un archivo en disco. “Abrir” una caja es leerla y descomprimirla.",
+      },
+      map: {
+        depot: "El almacén",
+        table: "una tabla",
+        box: "Una caja",
+        block: "un bloque de datos en disco",
+        sticker: "Su pegatina",
+        column: "la columna a la que pertenece",
+        pico: "Pico con un albarán",
+        query: "una consulta",
+        opened: "Cajas abiertas",
+        read: "datos leídos del disco",
+      },
+      rowSum: {
+        q: "Llega un albarán: sumar el total de todos los pedidos. Las cajas guardan filas completas. ¿Cuántas de las {n} cajas tendrá que abrir Pico?",
+        quarter: "Un cuarto: solo las de total",
+        half: "La mitad",
+        all: "Todas",
+        why: "Todas. En un almacén por filas, el total de cada pedido va metido junto a su fecha, cliente y ciudad: para sumar una columna, abres todo.",
+      },
+      rotate: {
+        title: "Giremos el almacén",
+        body: "Ahora reorganizamos: cada pasillo guardará <b>una sola columna</b>. Mira cómo cada caja vuela a su pasillo según su pegatina. Esto es lo que hace ClickHouse en disco: un archivo por columna.",
+      },
+      colSum: {
+        q: "Mismo albarán, mismas {total} cajas, ahora guardadas por columna. ¿Cuántas cajas abre Pico para sumar los totales?",
+        why: "Solo las {n} del pasillo <b>total</b>: los otros pasillos ni se tocan. Eso es una base de datos columnar: cada columna en su propio archivo, y una consulta lee solo las columnas que nombra.",
+      },
+      byCity: {
+        title: "Ingresos por ciudad",
+        body: "Tu primer albarán: ingresos por ciudad, <code>SELECT city, sum(total) … GROUP BY city</code>. Elige exactamente las columnas que necesita y ejecútala.",
+        success: "Dos pasillos de cuatro, la mitad de las cajas. Solo pagaste por lo que pediste.",
+      },
+      check: {
+        together: { q: "En una base de datos columnar, ¿qué se guarda junto?", column: "Todos los valores de una columna", row: "Todos los valores de una fila", random: "Lo que llegó a la vez", why: "Cada columna vive en su propio archivo, así una consulta lee solo las columnas que necesita." },
+        files: { q: "Una tabla de ClickHouse tiene 100 columnas. Una consulta usa {n}. ¿Cuántos archivos de columna lee?", why: "{n}: un archivo por cada columna que nombra. Las demás ni se abren." },
+        rowStore: { q: "Un almacén por filas guarda filas completas en {n} cajas. Sumas una columna. ¿Cuántas cajas abres?", why: "Las {n}: cada caja tiene un poco de cada columna, así que no puedes leer una columna sola." },
+        shines: { q: "¿Qué consulta acelera el almacenamiento por columnas?", aggregate: "Sumar una columna sobre millones de filas", lookup: "Traer una fila completa por su id", update: "Cambiar un campo de una fila", why: "Agregar pocas columnas sobre muchas filas: lees solo esas columnas. Traer o cambiar filas sueltas es lo que hacen bien las bases por filas." },
+      },
+    },
+    "1-2": {
+      title: "Solo lo que pides",
+      summary: "Las columnas que nombra una consulta deciden los bytes que lee.",
+      brief: {
+        title: "Cada columna cuesta",
+        body: "Ahora el almacén está por columnas. La regla es simple: <b>una consulta lee solo las columnas que nombra</b>. Y no todas pesan igual: un número largo ocupa más bytes que un código de ciudad corto. El panel de la derecha cuenta los <b>bytes leídos</b>.",
+      },
+      star: {
+        q: "Alguien manda <code>SELECT *</code>. ¿Qué parte de los bytes del almacén lee Pico?",
+        p25: "25%",
+        p50: "50%",
+        p100: "100%",
+        why: "El 100%: el asterisco son todas las columnas, así que Pico recorre todos los pasillos. <code>SELECT *</code> tira a la basura la gran ventaja de una base columnar.",
+      },
+      lightest: {
+        q: "¿Qué consulta de una sola columna lee menos bytes?",
+        total: "SELECT total",
+        customer_id: "SELECT customer_id",
+        city: "SELECT city",
+        why: "<code>city</code>: es <code>LowCardinality(String)</code>, unas pocas ciudades repetidas una y otra vez, así que en disco ocupa muy poco. Mismas cajas, peso muy distinto.",
+      },
+      daily: {
+        title: "Ventas por día",
+        body: "Albarán: ventas por día, <code>SELECT date, sum(total) … GROUP BY date</code>. Elige exactamente sus columnas y ejecútala.",
+        success: "Fecha y total, nada más. Los otros pasillos se quedaron cerrados.",
+      },
+      unique: {
+        title: "Clientes únicos por ciudad",
+        body: "Albarán: cuántos clientes distintos tiene cada ciudad, <code>SELECT city, uniq(customer_id) … GROUP BY city</code>.",
+        success: "Justo las columnas que necesita. Mira los bytes: <code>customer_id</code> pesa mucho más que <code>city</code>.",
+      },
+      check: {
+        star: { q: "<code>SELECT *</code> en una tabla de {n} columnas: ¿cuántas columnas lee?", why: "{n}: todas. Nombra tus columnas." },
+        unnamed: { q: "¿Qué pasa con las columnas que una consulta no nombra?", never: "No se leen nunca", skimmed: "Se leen por encima", always: "Se leen y se descartan", why: "Ni se abren: cada columna es un archivo aparte en disco." },
+        pct: { q: "Una consulta lee {read} de {of} columnas que pesan lo mismo. ¿Qué porcentaje de los bytes lee?", why: "{read} de {of} = {pct}%." },
+        sizes: { q: "¿Todas las columnas pesan lo mismo en disco?", differ: "No: depende del tipo y de cuánto comprime", same: "Sí, todas ocupan igual", rows: "Solo importa el número de filas", why: "Pesan distinto: los tipos tienen tamaños diferentes y los datos repetitivos comprimen mucho mejor." },
+      },
+    },
+    "1-3": {
+      title: "Pasillos que encogen",
+      summary: "Cada columna se comprime por separado; ordenar la hace encoger más.",
+      brief: {
+        title: "Aprieta cada pasillo",
+        body: "Cada columna se comprime <b>por su cuenta</b>. Los valores de una misma columna se parecen, así que comprimen mucho mejor que filas mezcladas. Y si los valores iguales quedan juntos (porque la tabla está ordenada por esa columna), encogen todavía más. Las proporciones aquí son ilustrativas; la regla es real.",
+      },
+      squeeze: {
+        title: "Compresión",
+        body: "Mira cómo encoge cada pasillo. <code>city</code> tiene pocos valores distintos y encoge mucho; <code>total</code> apenas cambia, porque casi cada total es distinto.",
+      },
+      sortCity: {
+        q: "Si ordenamos la tabla por <code>city</code> (<code>ORDER BY city</code>), ¿qué pasillo encoge más?",
+        date: "date",
+        customer_id: "customer_id",
+        city: "city",
+        total: "total",
+        why: "<code>city</code>: todas las Limas quedan juntas, luego todas las Madrides… tiradas largas del mismo valor que se comprimen casi a nada.",
+      },
+      smallest: {
+        title: "El almacén más pequeño",
+        body: "Prueba distintas columnas en el <code>ORDER BY</code> y deja la que haga más pequeña <b>la tabla entera</b>. Mira el total al final del panel.",
+        success: "Aquí gana <code>customer_id</code>: era la columna que peor comprimía, así que ordenarla ahorra más bytes. Elegir el ORDER BY es elegir qué se comprime y (mundo 3) qué se lee rápido.",
+      },
+      check: {
+        why: { q: "¿Por qué una columna comprime mejor que una fila?", alike: "Sus valores son del mismo tipo y se parecen", smaller: "Las columnas siempre son más cortas", magic: "ClickHouse usa un codec secreto", why: "Valores parecidos uno al lado del otro: a los compresores les encanta la repetición." },
+        sorted: { q: "Ordenar la tabla por una columna hace que esa columna…", more: "comprima más", less: "comprima menos", same: "comprima igual", why: "Los valores iguales quedan juntos y forman tiradas largas." },
+        codecSmall: { q: "ClickHouse 26.9, sin cláusula CODEC: ¿qué usa una part recién insertada de {mb} MB?", why: "LZ4: desde 26.9 las parts de menos de 100 MB usan LZ4 y las de 100 MB o más, ZSTD(3)." },
+        codecBig: { q: "ClickHouse 26.9, sin cláusula CODEC: ¿qué usa una part fusionada de {mb} MB?", why: "ZSTD(3): desde 26.9 las parts de 100 MB o más usan ZSTD(3) (antes, LZ4 en todas; Cloud usa ZSTD)." },
+        codec: { lz4: "LZ4", zstd: "ZSTD(3)", none: "Sin compresión" },
+      },
+    },
+    "1-4": {
+      title: "Analítica, no ventanilla",
+      summary: "Para qué está hecho ClickHouse, y para qué no.",
+      brief: {
+        title: "OLAP frente a OLTP",
+        body: "ClickHouse es una base de datos <b>analítica</b> (OLAP): está hecha para recorrer y agregar millones de filas sobre pocas columnas. El pago de una tienda, un login o actualizar un pedido cada segundo son trabajo <b>transaccional</b> (OLTP): filas que se leen y escriben de una en una. Para eso, una base como Postgres es la herramienta correcta.",
+      },
+      lookup: {
+        q: "Un empleado pide un pedido completo: <code>SELECT * … WHERE customer_id = 420</code>. ¿En cuántos pasillos tiene que abrir cajas Pico?",
+        why: "En 4: una fila completa está repartida en los 4 pasillos, así que Pico los visita todos (y lee cajas enteras de 8192 filas para devolver una). Un almacén por filas abriría una sola caja. Las búsquedas de filas sueltas son terreno OLTP.",
+      },
+      yearly: {
+        q: "La jefa quiere los ingresos del año: <code>SELECT sum(total)</code>. ¿Qué parte de las cajas abre Pico?",
+        p25: "25%",
+        p50: "50%",
+        p100: "100%",
+        why: "El 25%: un pasillo de cuatro, sobre todas las filas. Ese es el tipo de pregunta que ClickHouse responde en milisegundos.",
+      },
+      light: {
+        title: "Un informe ligero como una pluma",
+        body: "Pedidos por ciudad y día: <code>SELECT …, count()</code> con <b>al menos dos columnas</b> que lea <b>menos del 10%</b> de los bytes. ¿Qué pareja es lo bastante ligera?",
+        success: "<code>date</code> y <code>city</code>: las dos se repiten mucho y comprimen muy bien. Elegir columnas ligeras es media victoria de un informe rápido.",
+      },
+      real: {
+        title: "La versión real",
+        body: "Este es el almacén en ClickHouse de verdad. <code>system.columns</code> te dice cuánto pesa cada columna en disco, comprimida y sin comprimir.",
+      },
+      check: {
+        fits: { q: "¿Qué carga encaja mejor con ClickHouse?", dashboard: "Un dashboard que agrega miles de millones de eventos", cart: "Un carrito de compra que cambia en cada clic", login: "Comprobar la contraseña de un usuario al entrar", why: "Agregar cantidades enormes de datos. Carritos y logins leen y escriben filas sueltas: OLTP." },
+        oneRow: { q: "Para leer una fila completa de una tabla de {n} columnas, ¿cuántos archivos de columna toca ClickHouse?", why: "{n}: la fila está repartida entre todos los archivos de columna." },
+        minimum: { q: "¿Qué es lo mínimo que ClickHouse lee de una columna?", granule: "Un granule (hasta 8192 filas)", row: "Una fila", file: "El archivo entero", why: "Un granule: el índice apunta a bloques de 8192 filas, nunca a filas sueltas. Lo verás en el mundo 3." },
+        updates: { q: "Necesitas actualizar el estado de un pedido cada segundo. ¿Dónde?", oltp: "En una base OLTP (p. ej. Postgres)", clickhouse: "En ClickHouse, es más rápido", either: "Da igual", why: "En una base OLTP. Las parts de ClickHouse son inmutables; cambiar filas sueltas es caro (mundo 6)." },
+      },
+    },
+  },
+};
+
+for (const locale of ["en", "es"]) {
+  const file = new URL(`../messages/${locale}.json`, import.meta.url);
+  const json = JSON.parse(readFileSync(file, "utf8"));
+  Object.assign(json, ui[locale]);
+  json.levels = { ...(json.levels ?? {}), ...w1[locale] };
+  writeFileSync(file, JSON.stringify(json, null, 2) + "\n");
+  console.log(`updated ${locale}.json`);
+}

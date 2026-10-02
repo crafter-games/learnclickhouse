@@ -3,14 +3,15 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { motion, AnimatePresence } from "motion/react";
-import { Play, Truck, Package, Eye } from "@phosphor-icons/react";
+import { ArrowLeft, Play, Truck, Package, Eye } from "@phosphor-icons/react";
+import { Link } from "@/i18n/navigation";
 import { audioBus } from "@/audio/audioBus";
 import { AudioDirector } from "@/components/AudioDirector";
 import { DepotCanvas } from "@/components/DepotCanvas";
 import { Hud } from "@/components/Hud";
 import { useInsets } from "@/components/useInsets";
 import { Backdrop } from "@/components/ui/Backdrop";
-import { GameButton } from "@/components/ui/GameButton";
+import { GameButton, gameButtonClass } from "@/components/ui/GameButton";
 import { Logo } from "@/components/ui/Logo";
 import { GRANULE_ROWS, Table, type QueryResult } from "@/sim/table";
 import type { DepotStage } from "@/stage/depotStage";
@@ -78,7 +79,7 @@ export function DepotDesk() {
     if (busy || parts.length >= MAX_PARTS) return;
     setBusy(true);
     setResult(null);
-    stage.current?.resetBoxes();
+    void stage.current?.resetBoxes();
     audioBus().play("click", { bus: "ui" });
     const granules = INSERT_GRANULES[parts.length % INSERT_GRANULES.length];
     const rows = GRANULE_ROWS * granules - Math.floor(GRANULE_ROWS * 0.4);
@@ -97,7 +98,7 @@ export function DepotDesk() {
     const cols = [...selected];
     const r = table.query({ columns: cols });
     setIntensity(2);
-    await stage.current?.playQuery({ columns: cols }, r);
+    await stage.current?.playQuery(r);
     setIntensity(1);
     // The less Pico read, the higher the chime
     audioBus().play("done", { rate: 1 + (1 - r.boxesRead / r.boxesTotal) * 0.5 });
@@ -153,13 +154,19 @@ export function DepotDesk() {
           column: (name, type) => `${name}<small>${type}</small>`,
           part: (name) => name,
           dock: t("dock"),
+          rows: "orders",
         }}
       />
 
       {/* Header */}
       <header ref={header} className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-center justify-between gap-3 p-3 sm:p-4">
-        <div className="pointer-events-auto card flex items-center gap-3 px-3 py-2">
-          <Logo />
+        <div className="pointer-events-auto flex items-center gap-2">
+          <Link href="/world" aria-label={t("map")} className={gameButtonClass({ size: "icon" })}>
+            <ArrowLeft weight="bold" />
+          </Link>
+          <div className="card flex items-center gap-3 px-3 py-2">
+            <Logo />
+          </div>
         </div>
         <div className="pointer-events-auto">
           <Hud />

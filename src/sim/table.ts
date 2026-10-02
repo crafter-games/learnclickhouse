@@ -14,8 +14,11 @@ export const MAX_PARTS_PER_MERGE = 100;
 export type ColumnSpec = {
   name: string;
   type: string;
-  /** Average compressed bytes per row on disk (drives "bytes read"). */
+  /** Average compressed bytes per row on disk (drives "bytes read") when no ratios are given. */
   bytesPerRow: number;
+  /** Uncompressed bytes per row and compression ratios (sorted = the table is ordered by this column). */
+  raw?: number;
+  ratio?: { sorted: number; unsorted: number };
 };
 
 export type Granule = { rows: number; min?: number; max?: number };
@@ -37,6 +40,8 @@ export type TableSpec = {
   columns: ColumnSpec[];
   /** ORDER BY columns; the first one is used for granule pruning. */
   orderBy?: string[];
+  /** "row": every value of a row is stored together (an OLTP-style row store, for contrast). */
+  storage?: "row" | "column";
 };
 
 export type InsertOptions = {
@@ -105,6 +110,33 @@ export class Table {
 
   get columns() {
     return this.spec.columns;
+  }
+
+  get storage() {
+    return this.spec.storage ?? "column";
+  }
+
+  /** Switch between row and column storage (World 1's "rotate the table"). */
+  setStorage(storage: "row" | "column") {
+    this.spec.storage = storage;
+  }
+
+  /** Change the sorting key (affects compression and pruning). */
+  setOrderBy(orderBy: string[]) {
+    this.spec.orderBy = orderBy;
+  }
+
+  /** Compressed bytes per row of a column: sorted data compresses better (equal values side by side). */
+  bytesPerRow(col: ColumnSpec) {
+    if (!col.raw || !col.ratio) return col.bytesPerRow;
+    const sorted = this.spec.orderBy?.[0] === col.name;
+    return col.raw / (sorted ? col.ratio.sorted : col.ratio.unsorted);
+  }
+
+  /** Compressed and uncompressed size of every column over the active parts. */
+  columnSizes() {
+    const rows = this.activeParts.reduce((s, p) => s + p.rows, 0);
+    return this.columns.map((c) => ({ name: c.name, raw: rows * (c.raw ?? c.bytesPerRow), compressed: rows * this.bytesPerRow(c) }));
   }
 
   get activeParts() {
@@ -209,12 +241,14 @@ export class Table {
           granulesRead++;
           rowsRead += g.rows;
         }
-        // A filter column is read too (PREWHERE reads it first)
+        // A filter column is read too (PREWHERE reads it first). A row store can't read one
+        // column alone: every value of the row sits in the same box.
         const wanted = new Set(names);
         if (w) wanted.add(w.column);
+        const rowStore = this.storage === "row";
         for (const col of this.columns) {
-          const read = match && wanted.has(col.name);
-          const bytes = g.rows * col.bytesPerRow;
+          const read = match && (rowStore || wanted.has(col.name));
+          const bytes = g.rows * this.bytesPerRow(col);
           bytesTotal += bytes;
           if (read) bytesRead += bytes;
           boxes.push({ part: part.name, granule: i, column: col.name, read });

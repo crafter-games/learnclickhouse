@@ -106,3 +106,34 @@ describe("reading", () => {
     expect(r.granulesRead).toBe(10);
   });
 });
+
+describe("row vs column storage", () => {
+  it("a row store opens every box, whatever the query names", () => {
+    const t = orders();
+    t.setStorage("row");
+    t.insert(GRANULE_ROWS * 3);
+    const r = t.query({ columns: ["total"] });
+    expect(r.boxesRead).toBe(r.boxesTotal);
+    expect(r.bytesRead).toBe(r.bytesTotal);
+    t.setStorage("column");
+    expect(t.query({ columns: ["total"] }).boxesRead).toBe(3);
+  });
+});
+
+describe("compression", () => {
+  it("sorting by a column makes it compress better", () => {
+    const t = new Table({
+      name: "orders",
+      orderBy: ["total"],
+      columns: [
+        { name: "city", type: "LowCardinality(String)", bytesPerRow: 1, raw: 8, ratio: { sorted: 40, unsorted: 6 } },
+        { name: "total", type: "Decimal(10,2)", bytesPerRow: 1, raw: 8, ratio: { sorted: 2.2, unsorted: 2 } },
+      ],
+    });
+    t.insert(1000);
+    const before = t.columnSizes().find((c) => c.name === "city")!.compressed;
+    t.setOrderBy(["city"]);
+    const after = t.columnSizes().find((c) => c.name === "city")!.compressed;
+    expect(before / after).toBeCloseTo(40 / 6);
+  });
+});

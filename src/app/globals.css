@@ -77,6 +77,9 @@ button, a { touch-action: manipulation; }
 .aisle-tag b { width: 0.8em; height: 0.8em; border-radius: 0.25em; }
 .aisle-tag small { font-weight: 600; color: var(--ink-2); opacity: 0.75; }
 .aisle-tag.is-dim { opacity: 0.38; }
+.aisle-tag .stripes { display: inline-flex; gap: 2px; }
+.aisle-tag .stripes i { width: 0.35em; height: 0.9em; border-radius: 0.15em; }
+.aisle-tag--rows { font-family: var(--font-display); }
 .aisle-tag.is-on { background: var(--read); color: #fff; border-color: var(--read-dark); transform: scale(1.08); }
 .aisle-tag.is-on small { color: #fff; }
 
@@ -138,3 +141,40 @@ button, a { touch-action: manipulation; }
 .backdrop .blink { animation: blink 4s steps(1) infinite; }
 @keyframes blink { 0%, 70% { opacity: 1; } 71%, 100% { opacity: 0.25; } }
 @media (prefers-reduced-motion: reduce) { .backdrop *, .backdrop .puff { animation: none !important; } }
+
+/* ---------- World map (logistics park) ---------- */
+.plot-tag {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  font: 800 calc(16px * var(--stage-zoom, 1)) var(--font-display);
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.4em 0.95em 0.4em 0.4em;
+  box-shadow: 0 3px 0 rgba(43, 40, 64, 0.15);
+  white-space: nowrap;
+  transition: transform 200ms ease, background-color 200ms ease;
+}
+.plot-tag b {
+  display: grid;
+  place-items: center;
+  width: 1.8em;
+  height: 1.8em;
+  border-radius: 999px;
+  background: var(--indigo);
+  color: #fff;
+}
+.plot-tag.is-selected { background: var(--amber); border-color: var(--amber-dark); transform: scale(1.1); }
+.plot-tag.is-selected b { background: var(--ink); }
+.plot-tag.is-locked { color: var(--ink-2); }
+.plot-tag.is-locked b { background: #9a95b8; }
+
+/* Scene transition: the map opens from a closed iris */
+@keyframes iris-open {
+  from { clip-path: circle(150vmax at 50% 50%); }
+  to { clip-path: circle(0 at 50% 50%); visibility: hidden; }
+}
+.iris-open { animation: iris-open 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both; }
+@media (prefers-reduced-motion: reduce) { .iris-open { display: none; } }
