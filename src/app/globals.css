@@ -219,3 +219,15 @@ button, a { touch-action: manipulation; }
 }
 .truck-stamp--rejected { background: var(--danger); }
 .truck-stamp--duplicate { background: var(--amber); color: var(--on-amber); }
+
+/* Value printed on a box (tables with one row per box) */
+.box-val {
+  font: 700 calc(12px * var(--stage-zoom, 1)) var(--font-code);
+  color: var(--ink);
+  background: rgba(14, 15, 19, 0.85);
+  border: 1px solid var(--line);
+  border-radius: 0.35em;
+  padding: 0.2em 0.4em;
+  white-space: nowrap;
+  line-height: 1;
+}

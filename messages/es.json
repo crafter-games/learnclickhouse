@@ -82,7 +82,9 @@
     "tableSize": "Tabla en disco",
     "partsMeter": "Parts activas",
     "partsMeterNote": "Aquí: frena en {delay}, rechaza en {throw}. En ClickHouse real: 1000 y 3000 por partición.",
-    "mark": "marca"
+    "mark": "marca",
+    "result": "Resultado del SELECT",
+    "rowCount": "{n, plural, one {# fila} other {# filas}}"
   },
   "tools": {
     "insert": "Insertar pedidos",
@@ -1122,6 +1124,275 @@
           "why": "Por mes: cada borrado se convierte en un DROP PARTITION."
         }
       }
+    },
+    "5-1": {
+      "title": "La última versión",
+      "summary": "ReplacingMergeTree se queda con la fila más nueva de cada clave, con el tiempo.",
+      "brief": {
+        "title": "Actualizar es insertar",
+        "body": "En este almacén cada caja es <b>una fila</b>, con su valor escrito encima. Un <b>ReplacingMergeTree</b> conserva, para cada clave del ORDER BY, la fila con el <code>ver</code> más alto. Para “actualizar” un cliente <b>insertas una versión nueva</b>. Pero la vieja solo desaparece cuando las dos parts se <b>fusionan</b>, en un momento que nadie elige."
+      },
+      "update": {
+        "q": "El cliente 2 se muda a Bogotá: insertamos la versión 2. ¿Cuántas filas devuelve <code>SELECT *</code> ahora?",
+        "why": "4: las dos versiones del cliente 2 siguen ahí, en parts distintas. El reemplazo solo ocurre en los merges."
+      },
+      "merge": {
+        "q": "La prensa fusiona las dos parts. ¿Cuántas filas quedan?",
+        "why": "3: en el merge, las dos filas con id = 2 se quedan en la de ver más alto (Bogotá)."
+      },
+      "moves": {
+        "title": "Dos mudanzas y la verdad",
+        "body": "Los clientes 1 y 3 también se mudan. Inserta sus versiones nuevas y luego lee la tabla de forma que salga solo la última versión de cada uno, sin esperar al merge.",
+        "move1": "Cliente 1 → Santiago",
+        "move3": "Cliente 3 → Valencia",
+        "select": "SELECT *",
+        "final": "SELECT * FINAL",
+        "success": "FINAL fusionó al leer: una fila por cliente, la más nueva. Las parts siguen sin fusionar."
+      },
+      "check": {
+        "when": {
+          "q": "¿Cuándo quita ReplacingMergeTree las versiones viejas?",
+          "merge": "Cuando se fusionan las parts que las tienen",
+          "insert": "Al insertar",
+          "select": "En cada SELECT",
+          "why": "En los merges, en un momento desconocido. Hasta entonces se guardan y se devuelven las dos."
+        },
+        "key": {
+          "q": "¿Qué filas cuentan como “la misma” para ReplacingMergeTree?",
+          "orderBy": "Las que tienen la misma clave del ORDER BY",
+          "primary": "Las de una PRIMARY KEY única",
+          "all": "Solo filas idénticas",
+          "why": "La clave del ORDER BY, dentro de cada partición. No hay restricción de unicidad."
+        },
+        "count": {
+          "q": "Insertas {n} versiones del mismo id en {n} INSERT y no ha habido merges. ¿Cuántas filas muestra SELECT * para él?",
+          "why": "{n}: una por part hasta que se fusionen."
+        },
+        "noVer": {
+          "q": "ReplacingMergeTree sin columna ver se queda con…",
+          "last": "la última fila insertada",
+          "first": "la primera fila",
+          "random": "una fila al azar",
+          "why": "La última insertada."
+        }
+      }
+    },
+    "5-2": {
+      "title": "Caso: la versión fantasma",
+      "summary": "FINAL, argMax y filas borradas.",
+      "brief": {
+        "title": "Leer antes del merge",
+        "body": "Un cliente se queja: el dashboard lo muestra en dos ciudades. Dos herramientas lo arreglan sin esperar al merge. <code>FINAL</code> fusiona al leer (correcto, pero cuesta más). <code>argMax(city, ver)</code> con GROUP BY elige el valor más nuevo con una consulta normal. Y para borrar, insertas una versión con <code>deleted = 1</code>: FINAL la oculta."
+      },
+      "ghost": {
+        "q": "Dos versiones del cliente 2, todavía sin merge. ¿Cuántas filas devuelve <code>WHERE id = 2</code> sin FINAL?",
+        "why": "2: la vieja de Madrid y la nueva de Bogotá. Ese es el fantasma."
+      },
+      "delete": {
+        "q": "Insertamos otra vez el cliente 3 con <code>deleted = 1</code>. ¿Aparece el cliente 3 en <code>SELECT * FINAL</code>?",
+        "hidden": "No: FINAL oculta las filas marcadas como borradas",
+        "shown": "Sí, deleted es una columna más",
+        "error": "La consulta falla",
+        "why": "FINAL se queda con la versión más nueva y, como está marcada como borrada, la oculta. Un SELECT normal la sigue viendo hasta que los merges de limpieza la quiten."
+      },
+      "two": {
+        "title": "Dos formas de leer la verdad",
+        "body": "Muestra la respuesta correcta dos veces: una con FINAL y otra con argMax y GROUP BY. Compáralas con un SELECT normal.",
+        "select": "SELECT *",
+        "final": "SELECT * FINAL",
+        "argmax": "argMax(city, ver)",
+        "success": "Misma respuesta, dos caminos. FINAL es más simple; argMax es una agregación normal que también funciona entre shards."
+      },
+      "check": {
+        "final": {
+          "q": "¿Qué hace FINAL?",
+          "readTime": "Aplica la lógica de merge del motor al leer",
+          "forces": "Fuerza un merge real en disco",
+          "cache": "Lee de una caché",
+          "why": "Fusiona dentro de la consulta; las parts en disco se quedan igual."
+        },
+        "argMax": {
+          "q": "¿Qué función devuelve el valor de la fila con la versión más alta?",
+          "argMax": "argMax(valor, ver)",
+          "max": "max(valor)",
+          "any": "any(valor)",
+          "why": "argMax(valor, ver), agrupando por la clave."
+        },
+        "deleted": {
+          "q": "Con ReplacingMergeTree(ver, is_deleted), una fila con is_deleted = 1 se oculta…",
+          "final": "con FINAL (y la quitan los merges de limpieza)",
+          "always": "siempre, al momento",
+          "never": "nunca",
+          "why": "FINAL la oculta; un SELECT normal la sigue viendo hasta la limpieza."
+        },
+        "partition": {
+          "q": "¿Deduplica Replacing filas de particiones distintas?",
+          "within": "No, solo dentro de una partición",
+          "across": "Sí, entre todas",
+          "never": "Nunca",
+          "why": "Los merges nunca cruzan particiones, y la deduplicación tampoco."
+        }
+      }
+    },
+    "5-3": {
+      "title": "Contadores que se suman",
+      "summary": "SummingMergeTree suma los números de cada clave al fusionar.",
+      "brief": {
+        "title": "Contadores preagregados",
+        "body": "Un <b>SummingMergeTree</b> suma las columnas numéricas de las filas con la misma clave cuando se fusionan las parts, así una tabla de contadores se queda pequeña. Hasta entonces puede haber varias filas parciales por clave: lee siempre con <code>sum()</code> y GROUP BY."
+      },
+      "rows": {
+        "q": "La página 1 recibió visitas en dos inserts. ¿Cuántas filas devuelve <code>WHERE page = 1</code> antes de cualquier merge?",
+        "why": "2 filas parciales (5 y 2). Solo se suman cuando se fusionan las parts."
+      },
+      "sum": {
+        "q": "¿Qué da <code>sum(views)</code> para la página 1?",
+        "why": "5 + 2 = 7, con merge o sin él. Por eso se consulta con sum()."
+      },
+      "zero": {
+        "q": "Insertamos la página 3 con views = −1 (su total queda en 0) y se fusionan las parts. ¿Qué pasa con la página 3?",
+        "gone": "Su fila desaparece",
+        "zero": "Queda una fila con 0",
+        "negative": "Queda una fila con −1",
+        "why": "Cuando todas las columnas sumadas dan 0, SummingMergeTree quita la fila."
+      },
+      "report": {
+        "title": "Un informe correcto, siempre",
+        "body": "Llegan más visitas. Muestra las visitas por página correctamente mientras aún hay filas parciales en las estanterías.",
+        "more": "Más visitas",
+        "star": "SELECT *",
+        "sum": "sum(views) GROUP BY page",
+        "success": "sum() con GROUP BY da los totales correctos haya pasado la prensa o no."
+      },
+      "check": {
+        "when": {
+          "q": "¿Cuándo suma SummingMergeTree las filas?",
+          "merge": "En los merges",
+          "insert": "Al insertar",
+          "never": "Nunca, tienes que sumar tú",
+          "why": "En los merges; por eso igual sumas en las consultas."
+        },
+        "query": {
+          "q": "¿Cómo hay que leer una tabla SummingMergeTree?",
+          "sum": "sum() … GROUP BY clave",
+          "star": "Con SELECT * basta",
+          "final": "Solo con FINAL",
+          "why": "Agregando siempre: puede haber varias filas parciales por clave."
+        },
+        "total": {
+          "q": "Dos filas sin fusionar para una clave: {x} y {y}. ¿Qué devuelve sum()?",
+          "why": "{x} + {y} = {s}."
+        },
+        "zero": {
+          "q": "Tras un merge, los valores sumados de una clave dan todos 0. Su fila…",
+          "gone": "se quita",
+          "zero": "se queda con 0",
+          "error": "provoca un error",
+          "why": "Se quita."
+        }
+      }
+    },
+    "5-4": {
+      "title": "Estados agregados",
+      "summary": "AggregatingMergeTree guarda agregaciones parciales que se pueden combinar.",
+      "brief": {
+        "title": "Guardar media agregación",
+        "body": "Hay resultados que no se pueden sumar sin más: los usuarios únicos son el ejemplo clásico. Un <b>AggregatingMergeTree</b> guarda un <b>estado</b> de agregación (aquí, el conjunto de usuarios vistos). Lo escribes con <code>uniqState</code> y lo lees con <code>uniqMerge</code>, que combina los estados sin contar a nadie dos veces."
+      },
+      "day1": {
+        "q": "Día 1: una part vio a los usuarios [1, 2, 3] y otra a [2, 3, 4]. ¿Qué devuelve <code>uniqMerge(users)</code> para el día 1?",
+        "why": "4: los estados se combinan en [1, 2, 3, 4]. Sumar el recuento de cada part daría 6."
+      },
+      "press": {
+        "title": "Estados que se fusionan",
+        "body": "Mira la prensa: los dos estados del día 1 se convierten en uno, con la unión de los usuarios."
+      },
+      "count": {
+        "title": "Cuenta los visitantes",
+        "body": "El día 2 recibe más visitas. Muestra los visitantes únicos por día correctamente, antes de que las parts se vuelvan a fusionar.",
+        "visit": "Visitas nuevas el día 2",
+        "wrong": "suma de uniq por part",
+        "merge": "uniqMerge(users)",
+        "success": "uniqMerge combina estados, así que el usuario 5, que vino dos veces, cuenta una."
+      },
+      "check": {
+        "combinators": {
+          "q": "Para usar AggregatingMergeTree con uniq escribes con… y lees con…",
+          "stateMerge": "uniqState … uniqMerge",
+          "mergeState": "uniqMerge … uniqState",
+          "plain": "uniq … uniq",
+          "why": "-State para guardar el estado, -Merge para terminarlo."
+        },
+        "uniq": {
+          "q": "La part A vio {x} usuarios y la B {y}, con {shared} en las dos. ¿Usuarios únicos?",
+          "why": "{x} + {y} − {shared} = {n}."
+        },
+        "direct": {
+          "q": "¿Qué obtienes si seleccionas directamente una columna AggregateFunction?",
+          "binary": "Un estado binario, no el número",
+          "number": "El número final",
+          "error": "Siempre un error",
+          "why": "Un estado; termínalo con -Merge o finalizeAggregation."
+        },
+        "simple": {
+          "q": "Para sum, min o max, ¿qué tipo más ligero guarda valores normales?",
+          "simple": "SimpleAggregateFunction",
+          "aggregate": "AggregateFunction",
+          "nullable": "Nullable",
+          "why": "SimpleAggregateFunction: el estado es el propio valor."
+        }
+      }
+    },
+    "5-5": {
+      "title": "Altas y bajas",
+      "summary": "CollapsingMergeTree cancela filas con un signo.",
+      "brief": {
+        "title": "Cancelar y reemplazar",
+        "body": "<b>CollapsingMergeTree</b> usa una columna <code>sign</code>: +1 es una fila de estado y −1 la cancela. Para cambiar un valor insertas la fila vieja con −1 y la nueva con +1. Los merges cancelan las parejas; las consultas usan <code>sum(sign * x)</code>. VersionedCollapsingMergeTree admite cualquier orden de inserción, y <b>CoalescingMergeTree</b> (25.6) se queda con el último valor no NULL de cada columna."
+      },
+      "sum": {
+        "q": "El usuario 1 tiene las filas (+1, 5), (−1, 5), (+1, 6). ¿Qué da <code>sum(sign * views)</code>?",
+        "why": "5 − 5 + 6 = 6: la fila de cancelación quita el estado viejo."
+      },
+      "press": {
+        "title": "Las parejas se cancelan",
+        "body": "Mira la prensa: las filas +1 y −1 del usuario 1 se anulan entre sí y solo queda (+1, 6)."
+      },
+      "update": {
+        "title": "Actualiza al usuario 2",
+        "body": "El usuario 2 ahora tiene 9 visitas. Cámbialo a la manera de Collapsing y luego lee las visitas por usuario.",
+        "cancel": "Cancelar la fila vieja (−1, 4)",
+        "add": "Fila nueva (+1, 9)",
+        "read": "sum(sign * views)",
+        "success": "Cancelas el estado viejo, insertas el nuevo y sumas con el signo. El usuario 2 muestra 9."
+      },
+      "check": {
+        "sign": {
+          "q": "¿Qué hace una fila con sign = −1?",
+          "cancel": "Cancela una fila +1 equivalente",
+          "delete": "Borra la clave entera",
+          "negative": "Guarda un valor negativo",
+          "why": "Cancela la fila de estado con la misma clave."
+        },
+        "sum": {
+          "q": "Filas (+1, {x}), (−1, {x}), (+1, {y}). ¿sum(sign * x)?",
+          "why": "{x} − {x} + {y} = {y}."
+        },
+        "versioned": {
+          "q": "¿Qué añade VersionedCollapsingMergeTree?",
+          "anyOrder": "Las filas pueden llegar en cualquier orden (columna de versión)",
+          "faster": "Merges más rápidos",
+          "noSign": "No necesita columna de signo",
+          "why": "Una columna de versión, así la cancelación no tiene que llegar después de su estado."
+        },
+        "coalescing": {
+          "q": "¿Qué conserva CoalescingMergeTree por clave?",
+          "perColumn": "El último valor no NULL de cada columna",
+          "wholeRow": "La última fila entera",
+          "sum": "Sumas",
+          "why": "Por columna (25.6+), para upserts columna a columna."
+        }
+      }
     }
   },
   "map": {
@@ -1157,7 +1428,11 @@
       "title": "Turno de mañana"
     },
     "exam": "Examen final",
-    "certificate": "Certificado"
+    "certificate": "Certificado",
+    "w5": {
+      "title": "Motores de merge",
+      "body": "ReplacingMergeTree, SummingMergeTree, AggregatingMergeTree y CollapsingMergeTree: qué pasa con las filas de la misma clave cuando se fusionan las parts, y cómo leer bien antes de que pase."
+    }
   },
   "code": {
     "button": "Código",

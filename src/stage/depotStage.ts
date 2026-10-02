@@ -60,6 +60,8 @@ type Box = {
   state: BoxState;
   /** Visual size (compression), applied on top of squash animations. */
   size: number;
+  /** Value label (tables with logical rows: one box = one row's value). */
+  label?: HTMLElement;
 };
 type Section = { part: Part; x0: number; width: number; boxes: Box[]; tag: CSS2DObject; racks: THREE.Object3D[]; masked?: boolean };
 type Hall = { tag: CSS2DObject; floor: THREE.Mesh };
@@ -370,6 +372,34 @@ export class DepotStage {
     return racks;
   }
 
+  private formatValue(v: unknown, column: string): string {
+    if (v === null || v === undefined) return "NULL";
+    if (Array.isArray(v)) return `[${v.join(",")}]`;
+    if (column === "sign" && typeof v === "number") return v > 0 ? "+1" : "−1";
+    return String(v);
+  }
+
+  /** Write (or rewrite) the value labels of a section's boxes from its part's rows. */
+  private labelBoxes(section: { part: Part; boxes: Box[] }) {
+    const data = section.part.data;
+    if (!data) return;
+    for (const b of section.boxes) {
+      const v = data[b.granule]?.[this.columns[b.column].name];
+      if (!b.label) {
+        const l = label("box-val", "");
+        l.obj.position.set(0, 0.78, 0.1);
+        b.obj.add(l.obj);
+        b.label = l.inner;
+      }
+      b.label.textContent = this.formatValue(v, this.columns[b.column].name);
+    }
+  }
+
+  private removeBox(b: Box) {
+    this.scene.remove(b.obj);
+    b.label?.parentElement?.remove();
+  }
+
   private async makeBox(g: number, c: number): Promise<Box> {
     const obj = (await model("factory", "box-small")).clone(true);
     obj.traverse((o) => {
@@ -392,7 +422,9 @@ export class DepotStage {
     if (!boxes) for (let g = 0; g < part.granules.length; g++) for (let c = 0; c < this.columns.length; c++) all.push(await this.makeBox(g, c));
     const tag = label("part-tag", this.text.part(part.name));
     this.scene.add(tag.obj);
-    return { part, x0: NaN, width: this.sectionWidth(part), boxes: all, tag: tag.obj, racks: [] };
+    const section: Section = { part, x0: NaN, width: this.sectionWidth(part), boxes: all, tag: tag.obj, racks: [] };
+    this.labelBoxes(section);
+    return section;
   }
 
   private removeSectionObjects(s: Section, keepBoxes = false) {
@@ -400,7 +432,7 @@ export class DepotStage {
     s.racks = [];
     this.scene.remove(s.tag);
     (s.tag.element as HTMLElement).remove();
-    if (!keepBoxes) for (const b of s.boxes) this.scene.remove(b.obj);
+    if (!keepBoxes) for (const b of s.boxes) this.removeBox(b);
   }
 
   /**
@@ -580,7 +612,7 @@ export class DepotStage {
       this.sections.push(merged);
       this.sortSections();
       for (const b of extras)
-        void this.tweens.to(b.obj.scale, { x: 0.001, y: 0.001, z: 0.001 }, 220).then(() => this.scene.remove(b.obj));
+        void this.tweens.to(b.obj.scale, { x: 0.001, y: 0.001, z: 0.001 }, 220).then(() => this.removeBox(b));
       const tagEl = merged.tag.element as HTMLElement;
       tagEl.firstElementChild?.classList.add("is-new");
       await Promise.all([this.applyLayout(true), this.tweens.to(press.position, { y: 4 }, 380, easeOutCubic)]);

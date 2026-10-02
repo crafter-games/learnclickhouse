@@ -46,6 +46,7 @@ export class LevelSession {
     // A deep copy: levels mutate their table (storage, ORDER BY)
     this.table = new Table(structuredClone(level.table));
     for (const i of level.initial ?? []) this.table.insert(i.rows, i.options);
+    for (const rows of level.initialRows ?? []) this.table.insertRows(rows);
     const rng = seeded(newSeed());
     const stage = this.stage.api;
     const ctx: LevelCtx = {
@@ -79,6 +80,28 @@ export class LevelSession {
         await stage.deliver(part, { quick: options.quick });
         return part;
       },
+      insertRows: async (rows, options = {}) => {
+        const part = this.table.insertRows(rows, options);
+        if (!part) {
+          this.stats.dedupHits++;
+          this.changed();
+          await stage.turnAway("duplicate");
+          return null;
+        }
+        this.stats.inserts++;
+        this.changed();
+        await stage.deliver(part);
+        return part;
+      },
+      show: async (spec, sql, transform) => {
+        const result = this.table.query(spec);
+        if (transform && result.rows) result.rows = transform(result.rows);
+        ctx.last = { spec, result, sql };
+        this.stats.queries++;
+        await stage.playQuery(result);
+        this.changed();
+        return result;
+      },
       insertBlock: async (blocks) => {
         try {
           const parts = this.table.insertBlock(blocks);
@@ -101,6 +124,13 @@ export class LevelSession {
         this.stats.merges++;
         this.changed();
         await stage.merge(pick, part);
+        // Everything cancelled out (SummingMergeTree zeros, Collapsing pairs): the part is empty
+        if (part.rows === 0) {
+          part.active = false;
+          this.table.cleanup();
+          await stage.dropParts([part.name]);
+          this.changed();
+        }
         return part;
       },
       dropPartition: async (partition) => {

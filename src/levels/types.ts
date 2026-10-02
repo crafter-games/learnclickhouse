@@ -1,4 +1,5 @@
 import type { InsertOptions, KeyDistribution, Part, QueryResult, QuerySpec, Table, TableSpec, Where } from "@/sim/table";
+import type { Row } from "@/sim/engines";
 import type { Layout } from "@/stage/depotStage";
 import { shuffle } from "@/lib/rng";
 
@@ -12,7 +13,8 @@ export type Concept =
   | "columnar" | "column-read" | "compression" | "olap"
   | "parts" | "merges" | "too-many-parts" | "batching" | "async-insert" | "dedup"
   | "granules" | "sparse-index" | "key-order" | "pk-not-unique" | "explain"
-  | "partitions" | "partition-pruning" | "over-partition" | "drop-partition";
+  | "partitions" | "partition-pruning" | "over-partition" | "drop-partition"
+  | "replacing" | "final" | "summing" | "aggregating" | "collapsing";
 
 export type Choice = { id: string; label: Msg };
 export type ChoiceInput = { type: "choice"; options: Choice[] };
@@ -65,7 +67,7 @@ export type LevelCtx = {
   rng: () => number;
   stats: TaskStats;
   /** The last query the player (or a script) ran. */
-  last: { spec: QuerySpec; result: QueryResult } | null;
+  last: { spec: QuerySpec; result: QueryResult; sql?: string } | null;
   wait: (ms: number) => Promise<void>;
   /** Values the player sets in the dock (Tool "setting"). */
   settings: Record<string, Setting>;
@@ -74,6 +76,10 @@ export type LevelCtx = {
    * insert was rejected (too many parts) or deduplicated.
    */
   insert: (rows: number, options?: InsertOptions & { quick?: boolean }) => Promise<Part | null>;
+  /** INSERT of logical rows (World 5 tables: one box per row). */
+  insertRows: (rows: Row[], options?: InsertOptions) => Promise<Part | null>;
+  /** Run a query and show `sql` + `rows` (e.g. an aggregate computed from the rows) in the rows panel. */
+  show: (spec: QuerySpec, sql: string, transform?: (rows: Row[]) => Row[]) => Promise<QueryResult>;
   /** One INSERT spanning partitions: one part per partition (or null if rejected). */
   insertBlock: (blocks: { partition: string; rows: number; dist?: KeyDistribution; keyRange?: [number, number] }[]) => Promise<Part[] | null>;
   /** An application client inserting: goes through the async buffer when `settings.async` is true. */
@@ -124,7 +130,7 @@ export type Tool =
   | { type: "action"; id: string; label: Msg; icon?: "truck" | "repeat" | "trash" | "eraser" | "pencil" | "press" | "play"; tone?: "primary" | "accent" | "secondary" | "danger"; run: (ctx: LevelCtx) => Promise<unknown> };
 
 /** Live panels a step can show next to the stage. */
-export type Panel = "reading" | "parts" | "compression" | "partsMeter" | "index" | "explain";
+export type Panel = "reading" | "parts" | "compression" | "partsMeter" | "index" | "explain" | "rows";
 
 export type Step =
   | { kind: "brief"; title: Msg; body: Msg; mapping?: { icon: string; thing: Msg; real: Msg }[]; breaks?: Msg; code?: string }
@@ -159,6 +165,8 @@ export type Level = {
   table: TableSpec;
   /** Parts already on the shelves when the level starts. */
   initial?: { rows: number; options?: InsertOptions }[];
+  /** Parts of logical rows already on the shelves (World 5 tables). */
+  initialRows?: Row[][];
   /** Initial dock settings (ctx.settings). */
   settings?: Record<string, Setting>;
   /** How key values print in panels (e.g. city index → name). */

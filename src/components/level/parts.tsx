@@ -212,7 +212,7 @@ export function useBytes() {
 const panelTitle = "mb-1.5 flex items-center gap-1.5 font-display text-xs font-bold uppercase tracking-[0.14em] text-ink-2";
 
 /** What the last query read: boxes and bytes, with a bar. */
-type Last = { spec: QuerySpec; result: QueryResult } | null;
+type Last = { spec: QuerySpec; result: QueryResult; sql?: string } | null;
 
 export function ReadingPanel({ last }: { last: Last }) {
   const t = useTranslations("panels");
@@ -407,6 +407,55 @@ export function ExplainPanel({ last }: { last: Last }) {
   );
 }
 
+/** SELECT result for tables with logical rows; rows sharing a sorting key are flagged. */
+export function RowsPanel({ table, last }: { table: Table; last: Last }) {
+  const t = useTranslations("panels");
+  const rows = last?.result.rows;
+  const cols = table.columns.map((c) => c.name);
+  const key = table.spec.orderBy ?? [];
+  const keyOf = (r: Record<string, unknown>) => JSON.stringify(key.map((k) => r[k]));
+  const counts = new Map<string, number>();
+  for (const r of rows ?? []) counts.set(keyOf(r), (counts.get(keyOf(r)) ?? 0) + 1);
+  const fmt = (v: unknown) => (v === null || v === undefined ? "NULL" : Array.isArray(v) ? `[${v.join(",")}]` : String(v));
+  const shown = rows?.length ? Object.keys(rows[0]) : cols;
+  return (
+    <div>
+      <p className={panelTitle}>
+        <Rows weight="bold" /> {t("result")}
+      </p>
+      {last && <pre className="mb-2 overflow-x-auto whitespace-pre-wrap rounded-lg border border-white/10 bg-black/55 px-2.5 py-1.5 font-mono text-[12px] leading-snug text-amber">{last.sql ?? `SELECT * FROM ${table.spec.name}${last.spec.final ? " FINAL" : ""}`}</pre>}
+      {!rows ? (
+        <p className="text-base leading-snug text-ink-2">{t("noQuery")}</p>
+      ) : (
+        <>
+          <table className="w-full font-mono text-[13px]">
+            <thead>
+              <tr className="text-left text-ink-2">
+                {shown.map((c) => (
+                  <th key={c} className="px-1 py-0.5 font-semibold">{c}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => {
+                const dup = (counts.get(keyOf(r)) ?? 0) > 1;
+                return (
+                  <tr key={i} className={dup ? "bg-amber/15 text-amber" : "odd:bg-white/5"}>
+                    {shown.map((c) => (
+                      <td key={c} className="px-1 py-0.5">{fmt(r[c])}</td>
+                    ))}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p className="mt-1.5 font-mono text-xs text-ink-2">{t("rowCount", { n: rows.length })}</p>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function Panels({ panels, table, last, format }: { panels: Panel[]; table: Table; last: Last; format?: Record<string, (v: number) => string> }) {
   return (
     <div className="space-y-4">
@@ -416,6 +465,7 @@ export function Panels({ panels, table, last, format }: { panels: Panel[]; table
         : p === "partsMeter" ? <PartsMeterPanel key={p} table={table} />
         : p === "index" ? <IndexPanel key={p} table={table} last={last} format={format} />
         : p === "explain" ? <ExplainPanel key={p} last={last} />
+        : p === "rows" ? <RowsPanel key={p} table={table} last={last} />
         : <CompressionPanel key={p} table={table} />,
       )}
     </div>

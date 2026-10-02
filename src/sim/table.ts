@@ -2,6 +2,7 @@
 // Rows are not stored one by one: a part is a list of granules (≤ 8192 rows each) and, for the
 // sorting-key columns, each granule knows the key range it covers (data is sorted inside a part).
 import { Emitter } from "./emitter";
+import { collapse, type Engine, type Row } from "./engines";
 
 /** Rows per granule (`index_granularity`, MergeTreeSettings.cpp). */
 export const GRANULE_ROWS = 8192;
@@ -45,6 +46,8 @@ export type Part = {
   deletedRows?: number;
   /** Value distribution, kept so granule ranges can be rebuilt for another ORDER BY. */
   dist?: KeyDistribution;
+  /** Logical rows, for the small "one row per box" tables (World 5's engines). */
+  data?: Row[];
 };
 
 export type TableSettings = {
@@ -67,6 +70,8 @@ export type TableSpec = {
   storage?: "row" | "column";
   /** PARTITION BY, as text for the UI (the sim takes the partition from each insert). */
   partitionBy?: string;
+  /** Table engine (default plain MergeTree). */
+  engine?: Engine;
   settings?: TableSettings;
 };
 
@@ -78,12 +83,14 @@ export type InsertOptions = {
   dist?: KeyDistribution;
   /** Deduplication token: the hash of the inserted block. */
   token?: string;
+  /** Internal: don't emit partCreated yet (insertRows fills the rows first). */
+  quiet?: boolean;
 };
 
 /** A filter on one column; `label` is how the SQL shows the value (e.g. a city name for index 2). */
 export type Where = { column: string; min: number; max: number; label?: string };
 /** `partitions`: the partitions a filter on the partition key leaves (minmax pruning); unset = all. */
-export type QuerySpec = { columns: string[]; where?: Where; partitions?: string[] };
+export type QuerySpec = { columns: string[]; where?: Where; partitions?: string[]; final?: boolean };
 
 /** One box on the shelf: a granule of one column of one part. */
 export type BoxRead = { part: string; granule: number; column: string; read: boolean };
@@ -101,6 +108,8 @@ export type QueryResult = {
   bytesTotal: number;
   /** EXPLAIN indexes = 1 style funnel: [stage, parts selected, parts total, granules selected, granules total]. */
   explain: { stage: "Partition" | "PrimaryKey"; parts: [number, number]; granules: [number, number] }[];
+  /** For tables with logical rows: what SELECT returns (FINAL applies the engine at read time). */
+  rows?: Row[];
 };
 
 export type TableEvent =
@@ -181,6 +190,16 @@ export function sortedGranules(rows: number, orderBy: string[], dist: KeyDistrib
       if (first[k] !== last[k]) prefixConstant = false;
     });
     return { ...g, keys, min: keys[keyCols[0]]?.[0], max: keys[keyCols[0]]?.[1] };
+  });
+}
+
+/** One granule per logical row, with the row's key values as its range. */
+export function rowGranules(data: Row[], orderBy: string[]): Granule[] {
+  return data.map((r) => {
+    const keys: Record<string, [number, number]> = {};
+    for (const c of orderBy) if (typeof r[c] === "number") keys[c] = [r[c] as number, r[c] as number];
+    const first = orderBy[0] && typeof r[orderBy[0]] === "number" ? (r[orderBy[0]] as number) : undefined;
+    return { rows: 1, keys, min: first, max: first };
   });
 }
 
@@ -284,6 +303,16 @@ export class Table {
     if (active >= this.settings.partsToDelay) this.events.emit({ type: "insertDelayed", partition, activeParts: active });
     const part = this.makePart(rows, partition, options);
     this.parts.push(part);
+    if (!options.quiet) this.events.emit({ type: "partCreated", part });
+    return part;
+  }
+
+  /** INSERT of logical rows (one granule per row, so every box is a row). */
+  insertRows(rows: Row[], options: InsertOptions = {}): Part | null {
+    const part = this.insert(rows.length, { ...options, quiet: true });
+    if (!part) return null;
+    part.data = collapse(rows, { type: "MergeTree" }, this.spec.orderBy ?? []);
+    part.granules = rowGranules(part.data, this.spec.orderBy ?? []);
     this.events.emit({ type: "partCreated", part });
     return part;
   }
@@ -337,6 +366,13 @@ export class Table {
       active: true,
       dist,
     };
+    if (sources.some((p) => p.data)) {
+      // Engines act here: rows with the same sorting key are replaced / summed / collapsed
+      const data = collapse(sources.flatMap((p) => p.data ?? []), this.spec.engine ?? { type: "MergeTree" }, this.spec.orderBy ?? []);
+      part.data = data;
+      part.rows = data.length;
+      part.granules = rowGranules(data, this.spec.orderBy ?? []);
+    }
     for (const s of sources) {
       s.active = false;
       this.events.emit({ type: "partOutdated", part: s });
@@ -471,11 +507,19 @@ export class Table {
       if (partHit) partsRead++;
     }
     const partsTotal = this.activeParts.length;
+    let rows: Row[] | undefined;
+    if (this.activeParts.some((p) => p.data)) {
+      const engine = this.spec.engine ?? { type: "MergeTree" as const };
+      if (spec.final)
+        // FINAL merges at read time, partition by partition
+        rows = this.partitions.flatMap((pt) => collapse(this.activeParts.filter((p) => p.partition === pt).flatMap((p) => p.data ?? []), engine, this.spec.orderBy ?? [], true));
+      else rows = this.activeParts.flatMap((p) => p.data ?? []);
+    }
     const explain: QueryResult["explain"] = [];
     if (spec.partitions) explain.push({ stage: "Partition", parts: [afterPartition.parts, partsTotal], granules: [afterPartition.granules, granulesTotal] });
     const base = spec.partitions ? afterPartition : { parts: partsTotal, granules: granulesTotal };
     explain.push({ stage: "PrimaryKey", parts: [partsRead, base.parts], granules: [granulesRead, base.granules] });
-    return { boxes, boxesRead: boxes.filter((b) => b.read).length, boxesTotal: boxes.length, granulesRead, granulesTotal, partsRead, partsTotal, rowsRead, bytesRead, bytesTotal, explain };
+    return { boxes, boxesRead: boxes.filter((b) => b.read).length, boxesTotal: boxes.length, granulesRead, granulesTotal, partsRead, partsTotal, rowsRead, bytesRead, bytesTotal, explain, rows };
   }
 
   query(spec: QuerySpec): QueryResult {

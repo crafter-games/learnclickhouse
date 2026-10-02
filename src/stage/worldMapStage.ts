@@ -44,6 +44,11 @@ const PLOTS: Record<number, { pack: Pack; name: string; x: number; z: number; ry
     { pack: "city", name: "shipping-container-b", x: 2.3, z: 1.4, ry: -0.1, s: 1.5 },
   ],
 };
+PLOTS[5] = [
+  { pack: "city", name: "building-m", x: 0, z: -0.6, s: 2.1 },
+  { pack: "factory", name: "piston-square", x: 2.1, z: 0.8, s: 0.9 },
+  { pack: "city", name: "detail-tank-large", x: -2.2, z: 0.7, s: 1.2 },
+];
 const UPCOMING = [
   { pack: "city" as Pack, name: "building-h", x: 0, z: -0.6, s: 2.0 },
   { pack: "factory" as Pack, name: "warning-orange", x: -1.8, z: 1.2, s: 1 },

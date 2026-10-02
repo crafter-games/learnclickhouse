@@ -78,8 +78,8 @@ describe("final exam", () => {
     const { buildExam } = await import(".");
     const { questions, worlds } = buildExam(ALL_LEVELS.map((l) => l.id), 7);
     expect(questions).toHaveLength(20);
-    expect(new Set(worlds).size).toBe(4);
-    for (const w of [1, 2, 3, 4]) expect(worlds.filter((x) => x === w).length).toBeGreaterThanOrEqual(4);
+    expect(new Set(worlds).size).toBe(5);
+    for (const w of [1, 2, 3, 4, 5]) expect(worlds.filter((x) => x === w).length).toBeGreaterThanOrEqual(4);
   });
   it("only asks about played levels", async () => {
     const { buildExam } = await import(".");
