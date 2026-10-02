@@ -9,8 +9,8 @@ import { Tweens, easeInOutCubic, easeOutBack, easeOutCubic, wait } from "./tween
 // The warehouse (GDD → Verbos del almacén). World units: 1 shelf cell = 1 granule.
 // Aisles (columns) run along +x; each aisle has a roller rack with one box per granule and a
 // walkway in front of it (towards the camera) where Pico drives.
-const AISLE = 2.1; // distance between racks
-const WALK = 0.95; // walkway offset in front of a rack
+const AISLE = 2.25; // distance between racks
+const WALK = 1.12; // walkway offset in front of a rack (centre of the gap, clear of uprights)
 const START_X = 0; // first shelf cell
 const SECTION_GAP = 0.55; // space between parts (sections)
 const RACK_Y = 0.42; // top of the rollers
@@ -117,7 +117,15 @@ export class DepotStage {
     return this.rackZ(this.columns.length - 1) + WALK + 1.4;
   }
   private get homePos() {
-    return new THREE.Vector3(START_X - 2.1, 0, this.walkZ(this.columns.length - 1) + 0.2);
+    return new THREE.Vector3(this.leftAisleX, 0, this.walkZ(this.columns.length - 1));
+  }
+  /** Cross aisles: Pico only changes walkway along these, never across the racks. */
+  private get leftAisleX() {
+    return START_X - 1.9;
+  }
+  private get rightAisleX() {
+    const last = this.sections[this.sections.length - 1];
+    return (last ? last.x0 + last.width : START_X) + 0.9;
   }
   private get dockPos() {
     return new THREE.Vector3(START_X - 5.2, 0, this.frontZ + 0.4);
@@ -386,33 +394,35 @@ export class DepotStage {
       this.follow = true;
       await wait(250);
 
+      // Zig-zag like a real picker: one aisle left → right, the next one back
+      let forward = true;
       for (const { c: col, i: c } of readCols) {
-        // Into the aisle
-        await this.driveTo(new THREE.Vector3(START_X - 0.6, 0, this.walkZ(c)));
-        for (const s of this.sections)
-          for (let g = 0; g < s.width; g++) {
-            const b = s.boxes[c][g];
-            await this.driveTo(new THREE.Vector3(b.x, 0, this.walkZ(c)), true);
-            const read = this.boxFor(result, s.part.name, g, col.name)?.read ?? false;
-            if (read) {
-              this.setBox(b, "read");
-              this.pico.flash(true);
-              this.options.onSound?.("read", g);
-              void this.tweens.to(b.obj.position, { y: RACK_Y + 0.22 }, 110, easeOutCubic).then(() => this.tweens.to(b.obj.position, { y: RACK_Y }, 180, easeOutBack));
-              await wait(140);
-              this.pico.flash(false);
-            } else {
-              this.setBox(b, "skipped");
-              this.options.onSound?.("skip", g);
-              await wait(40);
-            }
+        const cells = this.sections.flatMap((s) => s.boxes[c].map((b, g) => ({ s, b, g })));
+        if (!forward) cells.reverse();
+        await this.travel(new THREE.Vector3(forward ? START_X - 0.6 : this.rightAisleX - 0.5, 0, this.walkZ(c)));
+        for (const { s, b, g } of cells) {
+          await this.driveTo(new THREE.Vector3(b.x, 0, this.walkZ(c)), true);
+          const read = this.boxFor(result, s.part.name, g, col.name)?.read ?? false;
+          if (read) {
+            this.setBox(b, "read");
+            this.pico.flash(true);
+            this.options.onSound?.("read", g);
+            void this.tweens.to(b.obj.position, { y: RACK_Y + 0.22 }, 110, easeOutCubic).then(() => this.tweens.to(b.obj.position, { y: RACK_Y }, 180, easeOutBack));
+            await wait(140);
+            this.pico.flash(false);
+          } else {
+            this.setBox(b, "skipped");
+            this.options.onSound?.("skip", g);
+            await wait(40);
           }
-        // Back out along the walkway
-        await this.driveTo(new THREE.Vector3(this.nextSectionX() + 0.3, 0, this.walkZ(c)), true);
+        }
+        // Out of the aisle on the far side
+        await this.driveTo(new THREE.Vector3(forward ? this.rightAisleX : this.leftAisleX, 0, this.walkZ(c)), true);
+        forward = !forward;
       }
       this.pico.setFace(result.boxesRead <= result.boxesTotal / 4 ? "happy" : "wow");
-      await this.driveTo(this.homePos);
-      this.pico.root.rotation.y = Math.PI / 2;
+      await this.travel(this.homePos);
+      await this.tweens.to(this.pico.root.rotation, { y: Math.PI / 2 }, 200, easeInOutCubic);
       this.follow = false;
       this.refit();
       void spec;
@@ -424,6 +434,21 @@ export class DepotStage {
 
   setFace(face: Face) {
     this.pico.setFace(face);
+  }
+
+  /**
+   * Drive along the warehouse's aisles only: to change walkway, go to the nearer cross aisle,
+   * along it, then into the target walkway — never diagonally through racks.
+   */
+  private async travel(to: THREE.Vector3) {
+    const p = this.pico.root.position.clone();
+    if (Math.abs(p.z - to.z) > 0.05) {
+      const cost = (x: number) => Math.abs(p.x - x) + Math.abs(to.x - x);
+      const cross = cost(this.leftAisleX) <= cost(this.rightAisleX) ? this.leftAisleX : this.rightAisleX;
+      await this.driveTo(new THREE.Vector3(cross, 0, p.z));
+      await this.driveTo(new THREE.Vector3(cross, 0, to.z));
+    }
+    await this.driveTo(to);
   }
 
   /** Drive Pico to a point (turning first). `straight` skips the turn for runs along an aisle. */
