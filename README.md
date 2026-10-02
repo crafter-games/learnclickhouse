@@ -1,6 +1,17 @@
 # Column Depot — Learn ClickHouse
 
-A 3D warehouse game that teaches how ClickHouse really stores and reads data: columns, parts and merges, the sparse primary index and partitions. Unofficial; ClickHouse is a trademark of ClickHouse, Inc.
+A 3D warehouse game that teaches how ClickHouse really stores and reads data. Unofficial; ClickHouse is a trademark of ClickHouse, Inc.
+
+11 worlds, 55 levels:
+
+1. Columns · 2. Inserts, parts & merges · 3. ORDER BY & the sparse index · 4. Partitions
+5. Merge-time engines (Replacing, Summing, Aggregating, Collapsing)
+6. Change & expire (mutations, lightweight DELETE/UPDATE, TTL, tiered storage)
+7. Skip & project (skip indexes, projections, query condition cache)
+8. Materialized views (incremental, refreshable, Kafka engine)
+9. Query execution (threads, PREWHERE, lazy materialization, hash joins, dictionaries)
+10. Types & codecs (smallest types, LowCardinality, Nullable, codecs, JSON)
+11. Replication & sharding (ReplicatedMergeTree, Keeper, insert_quorum, Distributed, SharedMergeTree)
 
 **Play:** https://learnclickhouse.crafter.run
 

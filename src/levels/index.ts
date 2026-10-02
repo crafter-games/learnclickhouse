@@ -9,6 +9,8 @@ import { WORLD6 } from "./world6";
 import { WORLD7 } from "./world7";
 import { WORLD8 } from "./world8";
 import { WORLD9 } from "./world9";
+import { WORLD10 } from "./world10";
+import { WORLD11 } from "./world11";
 
 /** Worlds in the map; `levels` empty = "coming soon" building. */
 export const WORLDS: { id: number; levels: Level[] }[] = [
@@ -21,6 +23,8 @@ export const WORLDS: { id: number; levels: Level[] }[] = [
   { id: 7, levels: WORLD7 },
   { id: 8, levels: WORLD8 },
   { id: 9, levels: WORLD9 },
+  { id: 10, levels: WORLD10 },
+  { id: 11, levels: WORLD11 },
 ];
 export const ALL_LEVELS: Level[] = WORLDS.flatMap((w) => w.levels);
 

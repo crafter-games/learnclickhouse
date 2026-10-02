@@ -46,6 +46,9 @@ export type StageLabels = {
   duplicate?: string;
   /** Stamp when the hot disk has no room (tiered storage). */
   full?: string;
+  /** Stamps for replicated inserts: quorum not reached, Keeper read-only. */
+  quorum?: string;
+  readonly?: string;
   buffer?: (rows: number) => string;
 };
 
@@ -250,7 +253,7 @@ export class DepotStage {
   /** World-space bounds of what the general shot must show. */
   private contentBounds() {
     const maxX = Math.max(this.endX + 1.4, START_X + 7);
-    return new THREE.Box3(new THREE.Vector3(this.dockPos.x - 0.6, 0, this.rackZ(0) - 0.9), new THREE.Vector3(maxX, 1.3, this.frontZ + (this.partitioned() ? 0.7 : 0)));
+    return new THREE.Box3(new THREE.Vector3(this.dockPos.x - 0.6, 0, this.rackZ(0) - 0.9), new THREE.Vector3(maxX, 1.3, this.frontZ + (this.partitioned() ? 1.3 : 0)));
   }
 
   // ------------------------------------------------------------------ build
@@ -530,10 +533,10 @@ export class DepotStage {
       tagEl.dataset.disk = disk ?? "";
       (hall.floor.material as THREE.MeshStandardMaterial).color.setHex(disk ? (DISK_TINTS[disk] ?? HALL_TINTS[i % HALL_TINTS.length]) : HALL_TINTS[i % HALL_TINTS.length]);
       const w = x1 - x0 + 0.9;
-      const depth = this.frontZ - this.rackZ(0) + 1.2;
+      const depth = this.frontZ - this.rackZ(0) + 1.8;
       hall.floor.scale.set(w, 1, depth);
       hall.floor.position.set((x0 + x1) / 2, 0.01, this.rackZ(0) - 0.8 + depth / 2);
-      hall.tag.position.set((x0 + x1) / 2, 0.05, this.frontZ + 0.15);
+      hall.tag.position.set((x0 + x1) / 2, 0.05, this.frontZ + 0.7);
     });
   }
 
@@ -586,12 +589,12 @@ export class DepotStage {
   }
 
   /** A truck comes in, gets a stamp (rejected / duplicate) and drives away with its load. */
-  turnAway(kind: "rejected" | "duplicate" | "full"): Promise<void> {
+  turnAway(kind: "rejected" | "duplicate" | "full" | "quorum" | "readonly"): Promise<void> {
     return this.queue(async () => {
       const truck = await this.driveTruckIn();
       const st = this.truckStamp!;
-      st.inner.className = `truck-stamp truck-stamp--${kind === "full" ? "rejected" : kind}`;
-      st.inner.textContent = (kind === "rejected" ? this.text.rejected : kind === "full" ? this.text.full : this.text.duplicate) ?? kind;
+      st.inner.className = `truck-stamp truck-stamp--${kind === "duplicate" ? "duplicate" : "rejected"}`;
+      st.inner.textContent = this.text[kind] ?? kind;
       st.obj.position.copy(truck.position).add(new THREE.Vector3(0, 2.1, 0));
       (st.obj.element as HTMLElement).style.visibility = "visible";
       this.options.onSound?.(kind === "duplicate" ? "drop" : "reject");
@@ -853,6 +856,14 @@ export class DepotStage {
   }
 
   /** Box size per column (e.g. compressed / uncompressed), animated. 1 = full size. */
+  /** Rewrite the aisle signs (a column changed type: ALTER TABLE … MODIFY COLUMN). */
+  relabelColumns() {
+    this.columns.forEach((col, c) => {
+      const tag = this.aisleTags[c];
+      if (tag) tag.innerHTML = `<b style="background:${this.colorOf(c)}"></b>${this.text.column(col.name, col.type)}`;
+    });
+  }
+
   setColumnSizes(sizes: Record<string, number>) {
     return this.queue(async () => {
       const all: Promise<void>[] = [];

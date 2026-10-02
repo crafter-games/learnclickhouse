@@ -69,6 +69,17 @@ PLOTS[9] = [
   { pack: "factory", name: "robot-arm-a", x: 1.8, z: 1.0, s: 0.8 },
   { pack: "factory", name: "robot-arm-a", x: 2.5, z: 0.6, ry: 0.6, s: 0.8 },
 ];
+PLOTS[10] = [
+  { pack: "city", name: "building-e", x: 0, z: -0.6, s: 2.1 },
+  { pack: "factory", name: "box-small", x: 1.8, z: 1.0, s: 1.2 },
+  { pack: "factory", name: "box-small", x: 2.3, z: 1.1, s: 0.7 },
+  { pack: "factory", name: "box-small", x: 2.6, z: 0.8, s: 0.45 },
+];
+PLOTS[11] = [
+  { pack: "city", name: "building-c", x: -0.9, z: -0.6, s: 1.7 },
+  { pack: "city", name: "building-c", x: 1.0, z: -0.6, s: 1.7 },
+  { pack: "car", name: "delivery", x: 0, z: 1.2, ry: Math.PI / 2, s: 0.55 },
+];
 const UPCOMING = [
   { pack: "city" as Pack, name: "building-h", x: 0, z: -0.6, s: 2.0 },
   { pack: "factory" as Pack, name: "warning-orange", x: -1.8, z: 1.2, s: 1 },

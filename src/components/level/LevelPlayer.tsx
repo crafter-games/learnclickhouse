@@ -312,18 +312,22 @@ export function LevelPlayer({ level, onRestart }: { level: Level; onRestart: () 
                 maskRows: (p, r) => s.maskRows(p, r),
                 moveParts: (n) => s.moveParts(n),
                 fillParts: (n) => s.fillParts(n),
+                relabelColumns: () => s.relabelColumns(),
               });
               setStageReady(true);
             }}
             labels={{
               column: (name, type) => (name.includes(":") ? `<em>${name.split(":")[0]}</em>${name.split(":")[1]}<small>${type}</small>` : `${name}<small>${type}</small>`),
-              part: (name) => name,
+              // Tables or replicas standing as halls: show the real part name (the hall says where)
+              part: (name) => (level.halls?.some((h) => name.startsWith(`${h}_`)) ? name.replace(/^[^_]+_/, "all_") : name),
               dock: ts("dock"),
               rows: ts("rows", { table: table.spec.name }),
               hall: (p, disk) => (level.halls?.includes(p) ? tl(`${level.id}.halls.${p}`) : disk ? ts("hallDisk", { p, disk: ts(`disk.${disk}`) }) : ts("hall", { p })),
               rejected: ts("rejected"),
               duplicate: ts("duplicate"),
               full: ts("full"),
+              quorum: ts("quorum"),
+              readonly: ts("readonly"),
               hallOrder: level.halls,
               buffer: (rows) => (level.bufferLabel ? tl(level.bufferLabel, { rows }) : ts("buffer", { rows })),
             }}
@@ -387,7 +391,7 @@ export function LevelPlayer({ level, onRestart }: { level: Level; onRestart: () 
 
             {panels && panels.length > 0 && (
               <aside ref={sideRef} className="card max-h-[26dvh] w-full overflow-y-auto px-4 py-3 lg:absolute lg:right-4 lg:top-[84px] lg:z-10 lg:max-h-[calc(100dvh-220px)] lg:w-[330px]">
-                <Panels panels={panels} table={table} last={ctx.last} format={level.format} settings={ctx.settings} />
+                <Panels panels={panels} table={table} last={ctx.last} format={level.format} settings={ctx.settings} halls={level.halls} />
               </aside>
             )}
           </div>

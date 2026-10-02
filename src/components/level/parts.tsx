@@ -255,7 +255,7 @@ export function ReadingPanel({ last }: { last: Last }) {
 }
 
 /** system.parts: the active parts on the shelves. */
-export function PartsPanel({ table }: { table: Table }) {
+export function PartsPanel({ table, halls }: { table: Table; halls?: string[] }) {
   const t = useTranslations("panels");
   const locale = useLocale();
   return (
@@ -266,7 +266,12 @@ export function PartsPanel({ table }: { table: Table }) {
       <ul className="space-y-1">
         {table.activeParts.map((p) => (
           <li key={p.name} className="flex items-center justify-between gap-2 font-mono text-sm">
-            <span className={p.patch ? "rounded border border-dashed border-amber px-1.5 font-bold text-amber" : "rounded bg-amber px-1.5 font-bold text-on-amber"}>{p.name}</span>
+            <span className="flex items-center gap-1.5">
+              <span className={p.patch ? "rounded border border-dashed border-amber px-1.5 font-bold text-amber" : "rounded bg-amber px-1.5 font-bold text-on-amber"}>
+                {halls?.includes(p.partition) ? p.name.replace(/^[^_]+_/, "all_") : p.name}
+              </span>
+              {halls?.includes(p.partition) && <span className="text-xs text-ink-2">{p.partition}</span>}
+            </span>
             <span className="text-right text-ink-2">
               {t("rows", { rows: new Intl.NumberFormat(locale).format(p.rows) })}
               {p.mask?.length ? <span className="ml-1.5 font-bold text-danger">{t("masked", { n: p.mask.length })}</span> : null}
@@ -504,6 +509,36 @@ export function QueryLogPanel({ last, settings }: { last: Last; settings: Record
   );
 }
 
+/** ClickHouse Keeper: ensemble health (majority or read-only) and the latest replication log lines. */
+export function KeeperPanel({ settings }: { settings: Record<string, Setting> }) {
+  const t = useTranslations("panels");
+  const n = Number(settings.keeperNodes ?? 3);
+  const down = Number(settings.keeperDown ?? 0);
+  const up = n - down;
+  const ok = up > n / 2;
+  const lines: string[] = JSON.parse(String(settings.keeperLog ?? "[]"));
+  return (
+    <div>
+      <p className={panelTitle}>
+        <Database weight="bold" /> {t("keeper")}
+      </p>
+      <div className="flex items-center gap-1.5">
+        {Array.from({ length: n }, (_, i) => (
+          <span key={i} className={`size-4 rounded-full ${i < up ? "bg-read" : "bg-danger"}`} />
+        ))}
+        <span className="ml-2 font-mono text-sm text-ink-2">{t("keeperNodes", { up, n })}</span>
+      </div>
+      <p className={`mt-1 text-sm font-bold ${ok ? "text-read" : "text-danger"}`}>{ok ? `${t("keeperQuorum")} ✓` : t("keeperReadonly")}</p>
+      <p className="mt-2 font-mono text-xs uppercase tracking-wider text-ink-2">{t("keeperLog")}</p>
+      <ul className="mt-1 space-y-0.5 rounded-lg bg-black/40 px-2.5 py-1.5 font-mono text-[12px] text-amber">
+        {lines.map((l, i) => (
+          <li key={`${i}-${l}`} className={i === lines.length - 1 ? "animate-bump" : "opacity-75"}>{l}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 /** The skip index of the last query: one cell per index block and part (skipped, read, false positive). */
 export function SkipIndexPanel({ table, last }: { table: Table; last: Last }) {
   const t = useTranslations("panels");
@@ -681,12 +716,12 @@ export function DisksPanel({ table, settings }: { table: Table; settings: Record
   );
 }
 
-export function Panels({ panels, table, last, format, settings = {} }: { panels: Panel[]; table: Table; last: Last; format?: Record<string, (v: number) => string>; settings?: Record<string, Setting> }) {
+export function Panels({ panels, table, last, format, settings = {}, halls }: { panels: Panel[]; table: Table; last: Last; format?: Record<string, (v: number) => string>; settings?: Record<string, Setting>; halls?: string[] }) {
   return (
     <div className="space-y-4">
       {panels.map((p) =>
         p === "reading" ? <ReadingPanel key={p} last={last} />
-        : p === "parts" ? <PartsPanel key={p} table={table} />
+        : p === "parts" ? <PartsPanel key={p} table={table} halls={halls} />
         : p === "partsMeter" ? <PartsMeterPanel key={p} table={table} />
         : p === "index" ? <IndexPanel key={p} table={table} last={last} format={format} />
         : p === "explain" ? <ExplainPanel key={p} last={last} />
@@ -697,6 +732,7 @@ export function Panels({ panels, table, last, format, settings = {} }: { panels:
         : p === "skipIndex" ? <SkipIndexPanel key={p} table={table} last={last} />
         : p === "cache" ? <CachePanel key={p} table={table} last={last} />
         : p === "queryLog" ? <QueryLogPanel key={p} last={last} settings={settings} />
+        : p === "keeper" ? <KeeperPanel key={p} settings={settings} />
         : <CompressionPanel key={p} table={table} />,
       )}
     </div>

@@ -320,8 +320,11 @@ export class Table {
 
   /** Compressed and uncompressed size of every column over the active parts. */
   columnSizes() {
-    const rows = this.activeParts.reduce((s, p) => s + p.rows, 0);
-    return this.columns.map((c) => ({ name: c.name, raw: rows * (c.raw ?? c.bytesPerRow), compressed: rows * this.bytesPerRow(c) }));
+    return this.columns.map((c) => {
+      // Only the parts that have this column (one table per hall, projections once built)
+      const rows = this.activeParts.filter((p) => (!c.only || c.only.includes(p.partition)) && (!c.projection || p.projections?.[c.projection])).reduce((s, p) => s + p.rows, 0);
+      return { name: c.name, raw: rows * (c.raw ?? c.bytesPerRow), compressed: rows * this.bytesPerRow(c) };
+    });
   }
 
   /** The engine that applies in a partition. */
@@ -632,6 +635,19 @@ export class Table {
     }
     this.applyRewrites(changes);
     return changes;
+  }
+
+  /**
+   * A replica fetches a part: an identical copy (same blocks, level and rows) in another partition,
+   * which stands for the other replica's disk.
+   */
+  copyPart(name: string, partition: string): Part {
+    const src = this.activeParts.find((p) => p.name === name);
+    if (!src) throw new Error(`No active part ${name}`);
+    const part: Part = { ...structuredClone(src), partition, name: partName(partition, src.minBlock, src.maxBlock, src.level, src.mutation) };
+    this.parts.push(part);
+    this.events.emit({ type: "partCreated", part });
+    return part;
   }
 
   /** Move whole parts to another disk / volume (tiered storage). */

@@ -30,6 +30,7 @@ function deferredStage() {
     maskRows: call("maskRows"),
     moveParts: call("moveParts"),
     fillParts: call("fillParts"),
+    relabelColumns: () => void ready.then((s) => s.relabelColumns()),
   } as StageApi;
   return { api, attach: resolve };
 }
@@ -215,6 +216,12 @@ export class LevelSession {
         this.changed();
         await stage.moveParts(moved.map((p) => p.name));
         return moved.length;
+      },
+      replicate: async (name, partition) => {
+        const part = this.table.copyPart(name, partition);
+        this.changed();
+        await stage.deliver(part, { quick: true });
+        return part;
       },
       materialize: async (kind, name) => {
         const parts = kind === "index" ? this.table.materializeIndex(name) : this.table.materializeProjection(name);

@@ -103,7 +103,12 @@
     "cache": "Query condition cache",
     "cacheMiss": "Aún sin entrada: se lee entera",
     "cacheSkipped": "{n, plural, one {# granule saltado} other {# granules saltados}} gracias a la caché",
-    "spilled": "Por encima del límite de memoria: el hash join vuelca a disco (más lento)."
+    "spilled": "Por encima del límite de memoria: el hash join vuelca a disco (más lento).",
+    "keeper": "ClickHouse Keeper",
+    "keeperNodes": "{up} de {n} nodos activos",
+    "keeperQuorum": "quórum",
+    "keeperReadonly": "sin quórum: solo lectura",
+    "keeperLog": "log de replicación"
   },
   "tools": {
     "insert": "Insertar pedidos",
@@ -123,7 +128,9 @@
     "disk": {
       "hot": "SSD",
       "s3": "S3"
-    }
+    },
+    "quorum": "FALLÓ · sin quórum",
+    "readonly": "RECHAZADO · Keeper solo lectura"
   },
   "levels": {
     "1-1": {
@@ -2562,6 +2569,625 @@
           "why": "Una lista que se prueba en orden (direct necesita un lado derecho tipo diccionario)."
         }
       }
+    },
+    "10-1": {
+      "title": "El tipo más pequeño que sirva",
+      "summary": "Int64 para una edad, String para una fecha: bytes que pagas en cada fila.",
+      "brief": {
+        "title": "Los bytes por fila se acumulan",
+        "body": "Cada fila paga por los tipos de sus columnas, antes y después de comprimir. <code>UInt8</code> guarda de 0 a 255 en 1 byte; <code>Int64</code> ocupa 8. Una fecha como <code>String</code> son ~20 bytes; como <code>DateTime</code>, 4. En un ejemplo documentado, elegir bien los tipos llevó una tabla de <b>131,58 GiB a 35,34 GiB</b> sin comprimir. Aquí las cajas encogen con los bytes que guardan."
+      },
+      "age": {
+        "q": "age Int64 → UInt8. ¿Cuántos bytes sin comprimir por fila ocupa ahora age?",
+        "why": "1: UInt8 es un byte, de sobra para 0–120."
+      },
+      "created": {
+        "q": "created String ('2026-10-02 12:00:00', ~20 bytes) → DateTime. ¿Bytes por fila?",
+        "why": "4: DateTime es un timestamp Unix de 32 bits. Además comprime y se compara mucho mejor que el texto."
+      },
+      "shrink": {
+        "title": "La tabla, a dieta",
+        "body": "Elige tipos para user_id y created y aplícalos para que la tabla ocupe como mucho el 45% de su tamaño inicial.",
+        "user_id": "user_id",
+        "created": "created",
+        "types": {
+          "Int64": "Int64",
+          "UInt32": "UInt32",
+          "String": "String",
+          "DateTime": "DateTime"
+        },
+        "apply": "ALTER TABLE … MODIFY COLUMN",
+        "success": "Ids UInt32 y un DateTime: una fracción de los bytes para la misma información. Columnas más pequeñas también son menos que leer en cada consulta."
+      },
+      "check": {
+        "age": {
+          "q": "¿El mejor tipo para una edad (0–120)?",
+          "uint8": "UInt8",
+          "int64": "Int64",
+          "string": "String",
+          "why": "UInt8: 1 byte."
+        },
+        "bytes": {
+          "q": "Cambiar una columna de Int64 a UInt8 en {millions} millones de filas ahorra cuántos millones de bytes (sin comprimir)?",
+          "why": "7 bytes por fila × {millions} millones = {n} millones."
+        },
+        "date": {
+          "q": "Los timestamps se guardan mejor como…",
+          "datetime": "DateTime / DateTime64",
+          "string": "String",
+          "float": "Float64",
+          "why": "4 (u 8) bytes, comprimen bien y se ordenan y comparan de forma nativa."
+        },
+        "enum": {
+          "q": "Un estado con 4 valores fijos se guarda mejor como…",
+          "enum": "Enum8 (o LowCardinality(String))",
+          "string": "String",
+          "uint64": "UInt64",
+          "why": "1 byte por fila con nombres legibles."
+        }
+      }
+    },
+    "10-2": {
+      "title": "LowCardinality",
+      "summary": "Codificar con diccionario los strings con pocos valores distintos, no todos.",
+      "brief": {
+        "title": "Un diccionario por part",
+        "body": "<code>LowCardinality(String)</code> guarda cada valor distinto una sola vez en un diccionario y un número pequeño por fila. Con unos cientos de ciudades se gana muchísimo. La regla práctica: bien <b>por debajo de 10.000</b> valores distintos, y puede salir <b>peor por encima de 100.000</b>, cuando los diccionarios se hacen enormes."
+      },
+      "city": {
+        "q": "city tiene ~200 valores distintos. LowCardinality(String) la deja…",
+        "smaller": "Mucho más pequeña",
+        "same": "Más o menos igual",
+        "bigger": "Más grande",
+        "why": "Mucho más pequeña: un índice diminuto por fila en vez del string."
+      },
+      "url": {
+        "q": "url tiene ~1.000.000 de valores distintos. LowCardinality(String) la deja…",
+        "smaller": "Mucho más pequeña",
+        "same": "Más o menos igual",
+        "bigger": "Más grande",
+        "why": "Más grande: el diccionario es casi tan grande como los datos, y encima están los índices."
+      },
+      "pick": {
+        "title": "Solo donde compensa",
+        "body": "Elige el tipo de cada columna para que la tabla sea lo más pequeña posible y aplícalo.",
+        "city": "city",
+        "url": "url",
+        "types": {
+          "String": "String",
+          "LowCardinality": "LowCardinality"
+        },
+        "apply": "ALTER TABLE … MODIFY COLUMN",
+        "success": "LowCardinality para city y String normal para url. Mira cuántos valores distintos hay (uniq()) antes de decidir."
+      },
+      "check": {
+        "how": {
+          "q": "LowCardinality(String) funciona…",
+          "dictionary": "Con un diccionario: cada valor una vez y un índice pequeño por fila",
+          "compress": "Con un codec más fuerte",
+          "index": "Construyendo un índice de salto",
+          "why": "Codificación con diccionario."
+        },
+        "fit": {
+          "q": "Una columna String tiene {distinct} valores distintos. ¿Encaja LowCardinality?",
+          "yes": "Sí",
+          "no": "No",
+          "whyYes": "Sí: muy por debajo de 10.000 valores distintos.",
+          "whyNo": "No: con tantos valores distintos el diccionario crece demasiado; por encima de ~100.000 puede salir peor."
+        },
+        "every": {
+          "q": "¿Debería ser LowCardinality toda columna String?",
+          "no": "No, solo las de pocos valores distintos",
+          "yes": "Sí",
+          "why": "Los strings con muchos valores distintos empeoran."
+        },
+        "vsEnum": {
+          "q": "LowCardinality antes que Enum cuando…",
+          "newValues": "Pueden aparecer valores nuevos sin hacer un ALTER",
+          "faster": "Necesitas inserts más rápidos",
+          "smaller": "Los valores son números",
+          "why": "Enum necesita la lista de antemano."
+        }
+      }
+    },
+    "10-3": {
+      "title": "Nullable no sale gratis",
+      "summary": "Un archivo extra de null map por columna, y sin claves por defecto.",
+      "brief": {
+        "title": "Un segundo archivo por columna",
+        "body": "<code>Nullable(T)</code> guarda un <b>null map</b> extra junto a la columna: un byte por fila que dice si el valor es NULL. Las lecturas y los filtros van más lentos, y por defecto una columna Nullable no puede estar en la clave de orden (<code>allow_nullable_key = 0</code>). Casi siempre un valor por defecto (<code>''''</code>, <code>0</code>) dice “desconocido” igual de bien."
+      },
+      "extra": {
+        "q": "Nullable(UInt32) frente a UInt32: ¿cuántos bytes extra sin comprimir por fila para el null map?",
+        "why": "1: un UInt8 por fila en un archivo aparte, que se lee junto a la columna."
+      },
+      "key": {
+        "q": "CREATE TABLE … (score Nullable(UInt32)) ORDER BY score. ¿Qué pasa?",
+        "error": "Un error, salvo con allow_nullable_key = 1",
+        "works": "Funciona sin más",
+        "slower": "Funciona, algo más lento",
+        "why": "Las claves Nullable se rechazan por defecto."
+      },
+      "defaults": {
+        "title": "Valores por defecto en vez de NULL",
+        "body": "Quita Nullable de phone y score (con DEFAULT '''' y DEFAULT 0) y aplícalo.",
+        "setting": "Nullable",
+        "values": {
+          "yes": "mantener",
+          "no": "quitar"
+        },
+        "apply": "ALTER TABLE … MODIFY COLUMN",
+        "success": "Sin null maps: columnas más pequeñas y lecturas más rápidas. Deja Nullable solo donde NULL signifique algo distinto de un valor por defecto."
+      },
+      "check": {
+        "cost": {
+          "q": "¿Qué añade Nullable?",
+          "nullMap": "Un archivo de null map (1 byte por fila) y más trabajo al procesar",
+          "free": "Nada",
+          "index": "Un índice",
+          "why": "El null map se lee con la columna."
+        },
+        "key": {
+          "q": "Una columna Nullable en el ORDER BY, por defecto…",
+          "refused": "Se rechaza (allow_nullable_key = 0)",
+          "fine": "Está bien",
+          "faster": "Va más rápido",
+          "why": "No se permite por defecto."
+        },
+        "bytes": {
+          "q": "Una columna Nullable de {millions} millones de filas tiene un null map de cuántos millones de bytes?",
+          "why": "{millions}: un byte por fila."
+        },
+        "instead": {
+          "q": "En vez de Nullable para “desconocido”, normalmente…",
+          "default": "Un valor por defecto como '''' o 0",
+          "nullable": "Nullable(Nullable(T))",
+          "string": "Guardarlo todo como String",
+          "why": "Los valores por defecto salen más baratos."
+        }
+      }
+    },
+    "10-4": {
+      "title": "Codecs",
+      "summary": "Delta y DoubleDelta para secuencias, encadenados con ZSTD; con los floats, mide.",
+      "brief": {
+        "title": "Transformar y luego comprimir",
+        "body": "Un <b>codec</b> transforma la columna antes de comprimirla. <code>Delta</code> guarda las diferencias entre vecinos, <code>DoubleDelta</code> las diferencias de las diferencias (perfecto para timestamps que avanzan a ritmo fijo), <code>Gorilla</code> apunta a floats y <code>T64</code> recorta bits que sobran. Se encadenan con un compresor: <code>CODEC(DoubleDelta, ZSTD)</code>. Una columna Date documentada pasó de 2,24 GiB a 24,55 MiB."
+      },
+      "delta": {
+        "q": "ts avanza cada pocos segundos. Con CODEC(DoubleDelta, ZSTD) en vez de LZ4, su tamaño queda en…",
+        "huge": "Una fracción diminuta",
+        "small": "Algo más pequeño",
+        "worse": "Más grande",
+        "why": "Una fracción diminuta: los pasos regulares se vuelven rachas de ceros, que ZSTD aplasta."
+      },
+      "gorilla": {
+        "q": "¿Es Gorilla siempre el mejor codec para floats?",
+        "notAlways": "No: ZSTD a secas gana a menudo; mide",
+        "always": "Sí",
+        "never": "Nunca sirve",
+        "why": "En las pruebas de ClickHouse, ZSTD a secas ganó a Gorilla con algunos datos float. Mide con system.columns."
+      },
+      "tune": {
+        "title": "Ajusta la tabla de sensores",
+        "body": "Elige para ts y para temp el codec que deje cada una más pequeña y aplícalo.",
+        "ts": "ts",
+        "temp": "temp",
+        "codecs": {
+          "LZ4": "LZ4",
+          "DoubleDelta, ZSTD": "DoubleDelta, ZSTD",
+          "Gorilla": "Gorilla",
+          "ZSTD": "ZSTD"
+        },
+        "apply": "ALTER TABLE … MODIFY COLUMN",
+        "success": "DoubleDelta + ZSTD para los timestamps regulares y ZSTD a secas para estas temperaturas. Compara los tamaños comprimidos en system.columns antes y después."
+      },
+      "check": {
+        "ts": {
+          "q": "¿La mejor familia de codecs para timestamps que avanzan a ritmo fijo?",
+          "doubleDelta": "DoubleDelta (encadenado con ZSTD)",
+          "gorilla": "Gorilla",
+          "none": "Ninguno",
+          "why": "Las diferencias de las diferencias son casi siempre cero."
+        },
+        "chain": {
+          "q": "CODEC(Delta, ZSTD) significa…",
+          "chain": "Primero Delta y luego ZSTD comprime el resultado",
+          "only": "Solo ZSTD",
+          "either": "El que salga más pequeño",
+          "why": "Los codecs se aplican en orden."
+        },
+        "float": {
+          "q": "Con columnas float deberías…",
+          "measure": "Probar ZSTD y Gorilla y medir",
+          "gorilla": "Usar siempre Gorilla",
+          "never": "No comprimir nunca",
+          "why": "Deciden los datos."
+        },
+        "where": {
+          "q": "¿Dónde comparas el tamaño comprimido y sin comprimir de cada columna?",
+          "columns": "system.columns (data_compressed_bytes / data_uncompressed_bytes)",
+          "parts": "system.merges",
+          "queryLog": "system.query_log",
+          "why": "system.columns."
+        }
+      }
+    },
+    "10-5": {
+      "title": "El tipo JSON",
+      "summary": "Cada ruta del JSON es su propia columna: lees una y te saltas el resto.",
+      "halls": {
+        "text": "events_text · payload String",
+        "json": "events_json · payload JSON"
+      },
+      "brief": {
+        "title": "Columnas dentro de una columna",
+        "body": "Con el tipo <b>JSON</b> (GA en 25.3) cada ruta, como <code>payload.ms</code>, se guarda como su propia <b>subcolumna columnar</b>, con su propio tipo. Leer una ruta lee solo esa subcolumna. Pasado <code>max_dynamic_paths</code> (1024), las rutas extra van a una columna de datos compartidos. Como String, el mismo payload hay que leerlo entero y parsearlo en cada consulta."
+      },
+      "json": {
+        "q": "SELECT avg(payload.ms) en la tabla JSON. ¿Qué se lee?",
+        "ms": "Solo la subcolumna payload.ms",
+        "all": "Todas las subcolumnas de payload",
+        "blob": "El payload entero",
+        "why": "Una subcolumna, unos pocos bytes por fila."
+      },
+      "text": {
+        "q": "Lo mismo en la tabla String con JSONExtractUInt(payload, 'ms'). ¿Qué se lee?",
+        "whole": "El string del payload entero, y luego se parsea",
+        "ms": "Solo el campo ms",
+        "why": "El string entero, en cada fila: aquí 30 bytes por fila, y además el parseo del JSON."
+      },
+      "compare": {
+        "title": "La misma respuesta, otra factura",
+        "body": "Lanza las dos versiones de avg(ms) y compara lo que lee cada una.",
+        "text": "avg(JSONExtractUInt(payload, 'ms'))",
+        "json": "avg(payload.ms)",
+        "success": "La subcolumna JSON leyó un pequeño porcentaje de los bytes, sin parsear nada. Usa el tipo JSON para datos semiestructurados que consultas por ruta."
+      },
+      "check": {
+        "stored": {
+          "q": "¿Cómo se guarda una columna JSON?",
+          "subcolumns": "Como una subcolumna columnar por ruta",
+          "blob": "Como un bloque de texto",
+          "rows": "Fila a fila",
+          "why": "Cada ruta es una subcolumna."
+        },
+        "paths": {
+          "q": "Una columna JSON tiene más rutas que max_dynamic_paths. Las que sobran…",
+          "shared": "Van a una columna de datos compartidos",
+          "error": "Provocan un error",
+          "dropped": "Se descartan",
+          "why": "Se siguen guardando, solo que no como subcolumnas separadas."
+        },
+        "ga": {
+          "q": "¿Desde qué versión está listo para producción el tipo JSON?",
+          "v253": "25.3",
+          "v226": "22.6",
+          "never": "Sigue siendo experimental",
+          "why": "25.3 (junto con Variant y Dynamic)."
+        },
+        "read": {
+          "q": "Una columna JSON tiene {n} rutas. Una consulta usa una. ¿Cuántas subcolumnas lee?",
+          "why": "1: solo la ruta que necesita."
+        }
+      }
+    },
+    "11-1": {
+      "title": "Las réplicas descargan parts",
+      "summary": "ReplicatedMergeTree: escribes en cualquier réplica y las demás descargan la part.",
+      "halls": {
+        "r1": "réplica 1",
+        "r2": "réplica 2"
+      },
+      "brief": {
+        "title": "Escribir una vez, descargar en todas",
+        "body": "Con <b>ReplicatedMergeTree</b> un INSERT va a <b>cualquier</b> réplica. Esa réplica escribe la part y la apunta en el <b>log de replicación</b> de Keeper; las demás réplicas leen el log y <b>descargan la part</b>. Es asíncrono y multi-master: no hay líder para las escrituras, y por defecto el INSERT responde en cuanto una réplica la tiene."
+      },
+      "lag": {
+        "q": "INSERT en la réplica 1. Cuando responde, ¿tiene ya la réplica 2 las filas?",
+        "soon": "No necesariamente: descarga la part poco después",
+        "already": "Sí, siempre",
+        "never": "No, nunca",
+        "why": "La replicación es asíncrona: el insert lo confirmó la réplica 1 y la réplica 2 descarga la part un momento después."
+      },
+      "master": {
+        "q": "¿Puedes hacer el INSERT en la réplica 2?",
+        "works": "Sí: cualquier réplica acepta escrituras",
+        "refused": "No: solo el líder acepta escrituras",
+        "why": "Multi-master: la réplica 1 descarga la part de la réplica 2 igual."
+      },
+      "both": {
+        "title": "Los mismos datos en las dos",
+        "body": "Inserta en cada réplica y comprueba que la réplica 2 tiene todas las filas.",
+        "insert1": "INSERT en la réplica 1",
+        "insert2": "INSERT en la réplica 2",
+        "count2": "SELECT * en la réplica 2",
+        "success": "Cada part se escribió una vez y la otra réplica la descargó. Los mismos nombres de part en las dos: las réplicas guardan parts idénticas."
+      },
+      "check": {
+        "how": {
+          "q": "¿Cómo consigue una réplica los datos insertados en otra?",
+          "fetch": "Lee el log de replicación en Keeper y descarga la part",
+          "sync": "El insert escribe en todas las réplicas a la vez",
+          "leader": "Un líder le empuja las filas",
+          "why": "Descargando las parts que aparecen en el log."
+        },
+        "master": {
+          "q": "¿Qué réplica puede aceptar INSERTs?",
+          "any": "Cualquiera",
+          "leader": "Solo el líder",
+          "first": "Solo la primera",
+          "why": "Multi-master."
+        },
+        "ack": {
+          "q": "Por defecto, ¿tras cuántas réplicas con la part responde un INSERT?",
+          "one": "Una",
+          "all": "Todas",
+          "majority": "Una mayoría",
+          "why": "Una (insert_quorum = 0)."
+        },
+        "copies": {
+          "q": "{replicas} réplicas, {inserts} INSERTs, todo replicado. ¿Cuántas copias de parts hay (antes de los merges)?",
+          "why": "{replicas} × {inserts} = {n}."
+        }
+      }
+    },
+    "11-2": {
+      "title": "insert_quorum",
+      "summary": "Esperar a N réplicas antes de dar el INSERT por bueno.",
+      "halls": {
+        "r1": "réplica 1",
+        "r2": "réplica 2"
+      },
+      "brief": {
+        "title": "¿Confirmado dónde?",
+        "body": "Por defecto (<code>insert_quorum = 0</code>) un INSERT se confirma en cuanto una réplica lo ha escrito. Si esa réplica muere antes de que las otras lo descarguen, los datos aún no están en ningún otro sitio. <code>insert_quorum = 2</code> (o <code>''auto''</code>, una mayoría) hace que el INSERT espere hasta que tantas réplicas tengan la part, y falle tras <code>insert_quorum_timeout</code> (600 s). Las lecturas solo ven datos con quórum con <code>select_sequential_consistency = 1</code>."
+      },
+      "zero": {
+        "q": "La réplica 2 está caída. INSERT con el insert_quorum = 0 por defecto. ¿Qué pasa?",
+        "ok": "Funciona; solo la réplica 1 tiene las filas",
+        "fails": "Falla",
+        "waits": "Espera a la réplica 2",
+        "why": "Funciona con una sola copia. La réplica 2 la descargará cuando vuelva."
+      },
+      "two": {
+        "q": "La réplica 2 sigue caída. El mismo INSERT con insert_quorum = 2?",
+        "timeout": "Espera y luego falla: no hay quórum",
+        "ok": "Funciona",
+        "partial": "Entra la mitad de las filas",
+        "why": "Solo una réplica puede confirmarlo, así que tras insert_quorum_timeout el INSERT falla y el cliente debe reintentar."
+      },
+      "durable": {
+        "title": "Escrituras duraderas",
+        "body": "Haz un INSERT que solo se confirme cuando las dos réplicas lo tengan.",
+        "revive": "Recuperar la réplica 2",
+        "quorum": "insert_quorum",
+        "quorums": {
+          "0": "0",
+          "2": "2"
+        },
+        "insert": "INSERT en la réplica 1",
+        "success": "La réplica 2 se puso al día con el log, y el INSERT con quórum respondió solo cuando las dos réplicas tenían la part."
+      },
+      "check": {
+        "default": {
+          "q": "¿Valor por defecto de insert_quorum?",
+          "zero": "0 (desactivado)",
+          "two": "2",
+          "all": "Todas las réplicas",
+          "why": "Desactivado: confirma una réplica."
+        },
+        "auto": {
+          "q": "insert_quorum = 'auto' significa…",
+          "majority": "Una mayoría de réplicas",
+          "all": "Todas las réplicas",
+          "one": "Una réplica",
+          "why": "Mayoría."
+        },
+        "reads": {
+          "q": "Para que las lecturas solo vean datos insertados con quórum también necesitas…",
+          "sequential": "select_sequential_consistency = 1",
+          "nothing": "Nada más",
+          "final": "FINAL",
+          "why": "El quórum por sí solo no hace consistente cada lectura."
+        },
+        "down": {
+          "q": "insert_quorum = 2 con una sola réplica activa. El INSERT…",
+          "timeout": "Falla tras insert_quorum_timeout",
+          "succeeds": "Funciona",
+          "queued": "Se queda en cola para siempre",
+          "why": "No puede alcanzar el quórum."
+        }
+      }
+    },
+    "11-3": {
+      "title": "ClickHouse Keeper",
+      "summary": "Coordinación, no almacenamiento: logs y metadatos, con mayoría.",
+      "halls": {
+        "r1": "réplica 1",
+        "r2": "réplica 2"
+      },
+      "brief": {
+        "title": "El coordinador",
+        "body": "<b>ClickHouse Keeper</b> (Raft, compatible con ZooKeeper) guarda los <b>metadatos</b>: logs de replicación, qué parts tiene cada réplica, los hashes de deduplicación de inserts y la cola de DDL ON CLUSTER. <b>No los datos</b>. Necesita una <b>mayoría</b> de sus nodos: 3 nodos aguantan 1 caída, 5 aguantan 2 (2F + 1). Sin mayoría, las tablas replicadas pasan a solo lectura."
+      },
+      "what": {
+        "q": "¿Qué guarda Keeper de esta tabla?",
+        "metadata": "El log de replicación y los metadatos",
+        "rows": "Las filas",
+        "both": "Las dos cosas",
+        "why": "Solo metadatos; las parts viven en los discos de las réplicas."
+      },
+      "one": {
+        "q": "3 nodos de Keeper, cae 1. ¿Puedes seguir haciendo INSERT?",
+        "yes": "Sí: 2 de 3 es mayoría",
+        "no": "No",
+        "why": "Sí: Raft necesita mayoría, y 2 de 3 basta."
+      },
+      "survive": {
+        "title": "Aguantar dos caídas",
+        "body": "Van a caer dos nodos de Keeper. Elige el tamaño del ensemble para que el clúster siga aceptando INSERTs.",
+        "nodes": "Nodos de Keeper",
+        "counts": {
+          "3": "3",
+          "5": "5"
+        },
+        "fail": "Caen dos nodos de Keeper",
+        "insert": "INSERT",
+        "success": "5 nodos, 2 caídos, 3 activos: sigue habiendo mayoría. 2F + 1 nodos aguantan F caídas."
+      },
+      "check": {
+        "stores": {
+          "q": "Keeper guarda…",
+          "metadata": "Metadatos: logs, listas de parts, hashes de dedup, cola de DDL",
+          "data": "Los datos de las tablas",
+          "both": "Datos y metadatos",
+          "why": "Nunca los datos."
+        },
+        "nodes": {
+          "q": "¿Cuántos nodos de Keeper para aguantar {f} caída(s)?",
+          "why": "2 × {f} + 1 = {n}."
+        },
+        "lost": {
+          "q": "Keeper pierde la mayoría. Las tablas replicadas…",
+          "readonly": "Pasan a solo lectura",
+          "fine": "Siguen funcionando",
+          "deleted": "Se borran",
+          "why": "Sin coordinación no hay escrituras."
+        },
+        "onCluster": {
+          "q": "CREATE … ON CLUSTER se ejecuta…",
+          "eventually": "Tarde o temprano en cada host, mediante una cola en Keeper",
+          "atomic": "De forma atómica en todos",
+          "never": "Solo en local",
+          "why": "Se encola en Keeper; distributed_ddl_task_timeout = 180 s es lo que espera el cliente."
+        }
+      }
+    },
+    "11-4": {
+      "title": "Shards y la tabla Distributed",
+      "summary": "Un enrutador sobre los shards: las filas van según sharding_key % shards.",
+      "halls": {
+        "s1": "shard 1 (user_id % 2 = 0)",
+        "s2": "shard 2 (user_id % 2 = 1)"
+      },
+      "brief": {
+        "title": "Repartir los datos",
+        "body": "Cuando un servidor no basta, los datos se reparten en <b>shards</b>. Una tabla <code>Distributed</code> no guarda nada: <b>enruta</b>. En un INSERT cada fila va a un shard según <code>sharding_key % peso total</code>; en un SELECT pregunta a todos los shards y junta las respuestas. En ClickHouse open source el INSERT se reenvía en segundo plano por defecto; con tablas Replicated usa <code>internal_replication = true</code>."
+      },
+      "route": {
+        "q": "INSERT INTO events_all de filas de los usuarios 5, 6, 7 y 8, con sharding por user_id. ¿Cuántas caen en el shard 1 (user_id % 2 = 0)?",
+        "why": "2: los usuarios 6 y 8. Los usuarios 5 y 7 van al shard 2."
+      },
+      "read": {
+        "q": "SELECT count() FROM events_all. ¿Qué shards se leen?",
+        "both": "Los dos, en paralelo",
+        "one": "Uno",
+        "none": "Ninguno: los datos están en la tabla Distributed",
+        "why": "Los dos: cada shard cuenta sus filas y el iniciador las suma."
+      },
+      "colocate": {
+        "title": "Un usuario, en un solo sitio",
+        "body": "Las filas se reparten con rand(). Cambia la clave de sharding para que todos los eventos del usuario 9 caigan en un shard y luego insértalos.",
+        "key": "clave de sharding",
+        "keys": {
+          "rand()": "rand()",
+          "user_id": "user_id"
+        },
+        "insert": "INSERT de 4 eventos del usuario 9",
+        "select": "SELECT … WHERE user_id = 9",
+        "success": "Con sharding por user_id las filas de cada usuario quedan en un shard, así que las consultas y los joins por usuario son locales. rand() reparte bien la carga pero dispersa a cada usuario."
+      },
+      "check": {
+        "stores": {
+          "q": "Una tabla Distributed…",
+          "router": "No guarda nada; enruta inserts y consultas a los shards",
+          "data": "Guarda una copia de todos los datos",
+          "cache": "Cachea resultados",
+          "why": "Es una vista que enruta."
+        },
+        "route": {
+          "q": "{shards} shards del mismo peso, clave de sharding {key}. ¿Qué índice de shard (desde 0) recibe la fila?",
+          "why": "{key} % {shards} = {n}."
+        },
+        "internal": {
+          "q": "Con shards ReplicatedMergeTree, internal_replication = true escribe en…",
+          "one": "Una réplica por shard; la replicación copia el resto",
+          "all": "Todas las réplicas directamente",
+          "none": "Ninguna réplica",
+          "why": "La replicación hace el resto."
+        },
+        "async": {
+          "q": "En ClickHouse open source, un INSERT en una tabla Distributed se reenvía a los shards…",
+          "background": "En segundo plano por defecto",
+          "always": "Siempre de forma síncrona",
+          "never": "Nunca",
+          "why": "distributed_foreground_insert = 0 por defecto (Cloud: 1)."
+        }
+      }
+    },
+    "11-5": {
+      "title": "SharedMergeTree y réplicas en paralelo",
+      "summary": "En ClickHouse Cloud los datos viven en almacenamiento de objetos y el cómputo escala.",
+      "halls": {
+        "s3": "almacenamiento de objetos compartido (S3)"
+      },
+      "brief": {
+        "title": "Almacenamiento por un lado, cómputo por otro",
+        "body": "En ClickHouse Cloud, <b>SharedMergeTree</b> guarda las parts en <b>almacenamiento de objetos compartido</b> y los metadatos en Keeper. Las réplicas son <b>cómputo sin estado</b>: añadir una no copia datos, y escalas sin diseñar shards. Las <b>réplicas en paralelo</b> (Beta, opcionales con <code>enable_parallel_replicas</code>) reparten los granules de una consulta entre réplicas."
+      },
+      "add": {
+        "q": "Añades una tercera réplica. ¿Cuántas parts hay que copiarle?",
+        "why": "0: lee el mismo almacenamiento compartido. Por eso escalar lleva segundos."
+      },
+      "split": {
+        "q": "Con réplicas en paralelo y 3 réplicas, una consulta lee 24 granules. ¿Cuántos lee cada réplica?",
+        "why": "8: los rangos de granules se reparten entre las réplicas, como los hilos en un servidor."
+      },
+      "scale": {
+        "title": "Escalar para la consulta grande",
+        "body": "Esta consulta tiene que terminar en 250 ms. Elige el número de réplicas y si usar réplicas en paralelo, y lánzala.",
+        "replicas": "réplicas",
+        "counts": {
+          "1": "1",
+          "2": "2",
+          "4": "4"
+        },
+        "parallel": "réplicas en paralelo",
+        "values": {
+          "0": "off",
+          "1": "on"
+        },
+        "run": "SELECT sum(total) FROM orders",
+        "success": "4 réplicas leyendo 6 granules cada una: 240 ms. Sin réplicas en paralelo, más réplicas ayudan a la concurrencia (más consultas a la vez), no a una sola consulta."
+      },
+      "check": {
+        "where": {
+          "q": "¿Dónde guarda los datos SharedMergeTree?",
+          "objectStorage": "En almacenamiento de objetos compartido",
+          "local": "En el disco local de cada réplica",
+          "keeper": "En Keeper",
+          "why": "Almacenamiento de objetos; Keeper guarda los metadatos."
+        },
+        "shard": {
+          "q": "En ClickHouse Cloud, ¿hay que diseñar shards para escalar?",
+          "notNeeded": "No: se añaden réplicas sobre almacenamiento compartido",
+          "required": "Sí, siempre",
+          "automatic": "Se crean shards por tabla",
+          "why": "Se escala añadiendo cómputo."
+        },
+        "parallel": {
+          "q": "Las réplicas en paralelo son…",
+          "optIn": "Opcionales (Beta)",
+          "always": "Siempre activas",
+          "removed": "Eliminadas",
+          "why": "enable_parallel_replicas = 0 por defecto."
+        },
+        "split": {
+          "q": "{replicas} réplicas con réplicas en paralelo y {granules} granules que leer. ¿Granules por réplica?",
+          "why": "{granules} ÷ {replicas} = {n}."
+        }
+      }
     }
   },
   "map": {
@@ -2617,6 +3243,14 @@
     "w9": {
       "title": "Ejecución de consultas",
       "body": "Hilos en paralelo, PREWHERE, lazy materialization, hash joins y su lado de construcción, diccionarios y query_log."
+    },
+    "w10": {
+      "title": "Tipos y codecs",
+      "body": "El tipo más pequeño que sirva, LowCardinality, lo que cuesta Nullable, codecs encadenados con ZSTD y el tipo JSON."
+    },
+    "w11": {
+      "title": "Replicación y sharding",
+      "body": "ReplicatedMergeTree y la descarga de parts, Keeper, insert_quorum, shards detrás de una tabla Distributed, SharedMergeTree y réplicas en paralelo."
     }
   },
   "code": {

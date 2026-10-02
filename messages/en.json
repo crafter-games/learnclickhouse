@@ -103,7 +103,12 @@
     "cache": "Query condition cache",
     "cacheMiss": "No entry yet: read in full",
     "cacheSkipped": "{n, plural, one {# granule} other {# granules}} skipped by the cache",
-    "spilled": "Over the memory limit: the hash join spills to disk (slower)."
+    "spilled": "Over the memory limit: the hash join spills to disk (slower).",
+    "keeper": "ClickHouse Keeper",
+    "keeperNodes": "{up} of {n} nodes up",
+    "keeperQuorum": "quorum",
+    "keeperReadonly": "no quorum: read-only",
+    "keeperLog": "replication log"
   },
   "tools": {
     "insert": "Insert orders",
@@ -123,7 +128,9 @@
     "disk": {
       "hot": "SSD",
       "s3": "S3"
-    }
+    },
+    "quorum": "FAILED · quorum not reached",
+    "readonly": "REJECTED · Keeper read-only"
   },
   "levels": {
     "1-1": {
@@ -2562,6 +2569,625 @@
           "why": "A list, tried in order (direct needs a dictionary-like right side)."
         }
       }
+    },
+    "10-1": {
+      "title": "The smallest type that fits",
+      "summary": "Int64 for an age, String for a date: bytes you pay on every row.",
+      "brief": {
+        "title": "Bytes per row add up",
+        "body": "Every row pays for its column types, before compression and after. <code>UInt8</code> holds 0–255 in 1 byte, <code>Int64</code> takes 8. A date as <code>String</code> is ~20 bytes; as <code>DateTime</code>, 4. In one documented example, choosing the right types took a table from <b>131.58 GiB to 35.34 GiB</b> uncompressed. Boxes here shrink with the bytes they hold."
+      },
+      "age": {
+        "q": "age Int64 → UInt8. How many uncompressed bytes per row does age take now?",
+        "why": "1: UInt8 is one byte, plenty for 0–120."
+      },
+      "created": {
+        "q": "created String ('2026-10-02 12:00:00', ~20 bytes) → DateTime. Bytes per row?",
+        "why": "4: DateTime is a 32-bit Unix timestamp. It also compresses and compares far better than text."
+      },
+      "shrink": {
+        "title": "Put the table on a diet",
+        "body": "Choose types for user_id and created and apply them so the table takes at most 45% of its starting size.",
+        "user_id": "user_id",
+        "created": "created",
+        "types": {
+          "Int64": "Int64",
+          "UInt32": "UInt32",
+          "String": "String",
+          "DateTime": "DateTime"
+        },
+        "apply": "ALTER TABLE … MODIFY COLUMN",
+        "success": "UInt32 ids and a DateTime: a fraction of the bytes for the same information. Smaller columns also mean less to read on every query."
+      },
+      "check": {
+        "age": {
+          "q": "Best type for an age (0–120)?",
+          "uint8": "UInt8",
+          "int64": "Int64",
+          "string": "String",
+          "why": "UInt8: 1 byte."
+        },
+        "bytes": {
+          "q": "Changing a column from Int64 to UInt8 on {millions} million rows saves how many million bytes (uncompressed)?",
+          "why": "7 bytes per row × {millions} million = {n} million."
+        },
+        "date": {
+          "q": "Timestamps are best stored as…",
+          "datetime": "DateTime / DateTime64",
+          "string": "String",
+          "float": "Float64",
+          "why": "4 (or 8) bytes, compress well, sort and compare natively."
+        },
+        "enum": {
+          "q": "A status with 4 fixed values is best as…",
+          "enum": "Enum8 (or LowCardinality(String))",
+          "string": "String",
+          "uint64": "UInt64",
+          "why": "1 byte per row with readable names."
+        }
+      }
+    },
+    "10-2": {
+      "title": "LowCardinality",
+      "summary": "Dictionary-encode strings with few distinct values, not all strings.",
+      "brief": {
+        "title": "A dictionary per part",
+        "body": "<code>LowCardinality(String)</code> stores each distinct value once in a dictionary and a small number per row. With a few hundred cities it's a big win. The rule of thumb: good <b>below 10,000</b> distinct values, and it can be <b>worse above 100,000</b>, when the dictionaries get huge."
+      },
+      "city": {
+        "q": "city has ~200 distinct values. LowCardinality(String) makes it…",
+        "smaller": "Much smaller",
+        "same": "About the same",
+        "bigger": "Bigger",
+        "why": "Much smaller: one tiny index per row instead of the string."
+      },
+      "url": {
+        "q": "url has ~1,000,000 distinct values. LowCardinality(String) makes it…",
+        "smaller": "Much smaller",
+        "same": "About the same",
+        "bigger": "Bigger",
+        "why": "Bigger: the dictionary is nearly as large as the data, plus the indexes."
+      },
+      "pick": {
+        "title": "Only where it pays",
+        "body": "Choose the type of each column so the table is as small as it can be, then apply.",
+        "city": "city",
+        "url": "url",
+        "types": {
+          "String": "String",
+          "LowCardinality": "LowCardinality"
+        },
+        "apply": "ALTER TABLE … MODIFY COLUMN",
+        "success": "LowCardinality for city, plain String for url. Check the number of distinct values (uniq()) before you decide."
+      },
+      "check": {
+        "how": {
+          "q": "LowCardinality(String) works by…",
+          "dictionary": "Dictionary encoding: each value once, a small index per row",
+          "compress": "A stronger codec",
+          "index": "Building a skip index",
+          "why": "Dictionary encoding."
+        },
+        "fit": {
+          "q": "A String column has {distinct} distinct values. Is LowCardinality a good fit?",
+          "yes": "Yes",
+          "no": "No",
+          "whyYes": "Yes: well under 10,000 distinct values.",
+          "whyNo": "No: with that many distinct values the dictionary gets too big; above ~100,000 it can be worse."
+        },
+        "every": {
+          "q": "Should every String column be LowCardinality?",
+          "no": "No, only low-cardinality ones",
+          "yes": "Yes",
+          "why": "High-cardinality strings get worse."
+        },
+        "vsEnum": {
+          "q": "LowCardinality over Enum, when…",
+          "newValues": "New values can appear without an ALTER",
+          "faster": "You need faster inserts",
+          "smaller": "Values are numbers",
+          "why": "Enum needs the list up front."
+        }
+      }
+    },
+    "10-3": {
+      "title": "Nullable isn't free",
+      "summary": "An extra null-map file per column, and no keys by default.",
+      "brief": {
+        "title": "A second file per column",
+        "body": "<code>Nullable(T)</code> keeps an extra <b>null map</b> next to the column: one byte per row saying whether the value is NULL. Reads and filters get slower, and by default a Nullable column can't be in the sorting key (<code>allow_nullable_key = 0</code>). Usually a default value (<code>''''</code>, <code>0</code>) says “unknown” just as well."
+      },
+      "extra": {
+        "q": "Nullable(UInt32) vs UInt32: how many extra uncompressed bytes per row for the null map?",
+        "why": "1: one UInt8 per row in a separate file, read along with the column."
+      },
+      "key": {
+        "q": "CREATE TABLE … (score Nullable(UInt32)) ORDER BY score. What happens?",
+        "error": "An error, unless allow_nullable_key = 1",
+        "works": "It just works",
+        "slower": "It works, a bit slower",
+        "why": "Nullable keys are refused by default."
+      },
+      "defaults": {
+        "title": "Defaults instead of NULL",
+        "body": "Drop Nullable from phone and score (use DEFAULT '''' and DEFAULT 0) and apply.",
+        "setting": "Nullable",
+        "values": {
+          "yes": "keep",
+          "no": "remove"
+        },
+        "apply": "ALTER TABLE … MODIFY COLUMN",
+        "success": "No null maps: smaller columns and faster scans. Keep Nullable only where NULL truly means something different from a default."
+      },
+      "check": {
+        "cost": {
+          "q": "What does Nullable add?",
+          "nullMap": "A null-map file (1 byte per row) and slower processing",
+          "free": "Nothing",
+          "index": "An index",
+          "why": "The null map is read with the column."
+        },
+        "key": {
+          "q": "A Nullable column in ORDER BY, by default…",
+          "refused": "Is refused (allow_nullable_key = 0)",
+          "fine": "Is fine",
+          "faster": "Is faster",
+          "why": "Not allowed by default."
+        },
+        "bytes": {
+          "q": "A Nullable column over {millions} million rows has a null map of how many million bytes?",
+          "why": "{millions}: one byte per row."
+        },
+        "instead": {
+          "q": "Instead of Nullable for “unknown”, usually…",
+          "default": "A default value like '''' or 0",
+          "nullable": "Nullable(Nullable(T))",
+          "string": "Store everything as String",
+          "why": "Defaults are cheaper."
+        }
+      }
+    },
+    "10-4": {
+      "title": "Codecs",
+      "summary": "Delta and DoubleDelta for sequences, chained with ZSTD; measure floats.",
+      "brief": {
+        "title": "Transform, then compress",
+        "body": "A <b>codec</b> transforms a column before compression. <code>Delta</code> stores differences between neighbours, <code>DoubleDelta</code> differences of differences (perfect for timestamps that tick regularly), <code>Gorilla</code> targets floats, <code>T64</code> crops unused bits. They're chained with a compressor: <code>CODEC(DoubleDelta, ZSTD)</code>. One documented Date column went from 2.24 GiB to 24.55 MiB."
+      },
+      "delta": {
+        "q": "ts ticks every few seconds. With CODEC(DoubleDelta, ZSTD) instead of LZ4, its size becomes…",
+        "huge": "A tiny fraction",
+        "small": "A bit smaller",
+        "worse": "Bigger",
+        "why": "A tiny fraction: regular ticks turn into runs of zeros, which ZSTD crushes."
+      },
+      "gorilla": {
+        "q": "Is Gorilla always the best codec for floats?",
+        "notAlways": "No: plain ZSTD often wins; measure",
+        "always": "Yes",
+        "never": "It's never useful",
+        "why": "In ClickHouse's own tests plain ZSTD beat Gorilla on some float data. Measure with system.columns."
+      },
+      "tune": {
+        "title": "Tune the sensors table",
+        "body": "Choose the codec for ts and temp that makes each one smallest, then apply.",
+        "ts": "ts",
+        "temp": "temp",
+        "codecs": {
+          "LZ4": "LZ4",
+          "DoubleDelta, ZSTD": "DoubleDelta, ZSTD",
+          "Gorilla": "Gorilla",
+          "ZSTD": "ZSTD"
+        },
+        "apply": "ALTER TABLE … MODIFY COLUMN",
+        "success": "DoubleDelta + ZSTD for the regular timestamps, plain ZSTD for these temperatures. Compare compressed sizes in system.columns before and after."
+      },
+      "check": {
+        "ts": {
+          "q": "Best codec family for regularly ticking timestamps?",
+          "doubleDelta": "DoubleDelta (chained with ZSTD)",
+          "gorilla": "Gorilla",
+          "none": "None",
+          "why": "Differences of differences are mostly zero."
+        },
+        "chain": {
+          "q": "CODEC(Delta, ZSTD) means…",
+          "chain": "Delta first, then ZSTD compresses the result",
+          "only": "Only ZSTD",
+          "either": "Whichever is smaller",
+          "why": "Codecs run in order."
+        },
+        "float": {
+          "q": "For float columns, you should…",
+          "measure": "Try ZSTD and Gorilla and measure",
+          "gorilla": "Always use Gorilla",
+          "never": "Never compress",
+          "why": "Data decides."
+        },
+        "where": {
+          "q": "Where do you compare compressed and uncompressed sizes per column?",
+          "columns": "system.columns (data_compressed_bytes / data_uncompressed_bytes)",
+          "parts": "system.merges",
+          "queryLog": "system.query_log",
+          "why": "system.columns."
+        }
+      }
+    },
+    "10-5": {
+      "title": "The JSON type",
+      "summary": "Each JSON path becomes its own column; read one, skip the rest.",
+      "halls": {
+        "text": "events_text · payload String",
+        "json": "events_json · payload JSON"
+      },
+      "brief": {
+        "title": "Columns inside a column",
+        "body": "With the <b>JSON</b> type (GA in 25.3) every path, like <code>payload.ms</code>, is stored as its own <b>columnar subcolumn</b>, with its own type. Reading one path reads only that subcolumn. Beyond <code>max_dynamic_paths</code> (1024) extra paths go to a shared data column. As a String, the same payload must be read whole and parsed on every query."
+      },
+      "json": {
+        "q": "SELECT avg(payload.ms) on the JSON table. What is read?",
+        "ms": "Only the payload.ms subcolumn",
+        "all": "Every payload subcolumn",
+        "blob": "The whole payload",
+        "why": "One subcolumn, a few bytes per row."
+      },
+      "text": {
+        "q": "The same on the String table with JSONExtractUInt(payload, 'ms'). What is read?",
+        "whole": "The whole payload string, then parsed",
+        "ms": "Just the ms field",
+        "why": "The whole string, every row: 30 bytes per row here, then JSON parsing."
+      },
+      "compare": {
+        "title": "Same answer, different bill",
+        "body": "Run both versions of avg(ms) and compare what each reads.",
+        "text": "avg(JSONExtractUInt(payload, 'ms'))",
+        "json": "avg(payload.ms)",
+        "success": "The JSON subcolumn read a few percent of the bytes, with no parsing. Use the JSON type for semi-structured data you query by path."
+      },
+      "check": {
+        "stored": {
+          "q": "How is a JSON column stored?",
+          "subcolumns": "As one columnar subcolumn per path",
+          "blob": "As a text blob",
+          "rows": "Row by row",
+          "why": "Each path is a subcolumn."
+        },
+        "paths": {
+          "q": "A JSON column has more paths than max_dynamic_paths. The extra ones…",
+          "shared": "Go to a shared data column",
+          "error": "Cause an error",
+          "dropped": "Are dropped",
+          "why": "They're still stored, just not as separate subcolumns."
+        },
+        "ga": {
+          "q": "Since which version is the JSON type production-ready?",
+          "v253": "25.3",
+          "v226": "22.6",
+          "never": "Still experimental",
+          "why": "25.3 (with Variant and Dynamic)."
+        },
+        "read": {
+          "q": "A JSON column has {n} paths. A query uses one of them. How many subcolumns does it read?",
+          "why": "1: only the path it needs."
+        }
+      }
+    },
+    "11-1": {
+      "title": "Replicas fetch parts",
+      "summary": "ReplicatedMergeTree: write on any replica, the others fetch the part.",
+      "halls": {
+        "r1": "replica 1",
+        "r2": "replica 2"
+      },
+      "brief": {
+        "title": "Write once, fetch everywhere",
+        "body": "With <b>ReplicatedMergeTree</b> an INSERT goes to <b>any</b> replica. That replica writes the part and records it in the <b>replication log</b> in Keeper; the other replicas read the log and <b>fetch the part</b>. It's asynchronous and multi-master: there's no leader for writes, and by default the INSERT returns once one replica has it."
+      },
+      "lag": {
+        "q": "INSERT on replica 1. When it returns, does replica 2 already have the rows?",
+        "soon": "Not necessarily: it fetches the part shortly after",
+        "already": "Yes, always",
+        "never": "No, never",
+        "why": "Replication is asynchronous: the insert was acknowledged by replica 1, replica 2 fetches the part a moment later."
+      },
+      "master": {
+        "q": "Can you INSERT on replica 2 instead?",
+        "works": "Yes: any replica takes writes",
+        "refused": "No: only the leader takes writes",
+        "why": "Multi-master: replica 1 fetches the part from replica 2 the same way."
+      },
+      "both": {
+        "title": "Same data on both",
+        "body": "Insert on each replica, then check that replica 2 has every row.",
+        "insert1": "INSERT on replica 1",
+        "insert2": "INSERT on replica 2",
+        "count2": "SELECT * on replica 2",
+        "success": "Each part was written once and fetched by the other replica. Same part names on both: replicas hold identical parts."
+      },
+      "check": {
+        "how": {
+          "q": "How does a replica get data inserted on another replica?",
+          "fetch": "It reads the replication log in Keeper and fetches the part",
+          "sync": "The insert writes to all replicas synchronously",
+          "leader": "A leader pushes rows",
+          "why": "Fetching parts listed in the log."
+        },
+        "master": {
+          "q": "Which replica can take INSERTs?",
+          "any": "Any of them",
+          "leader": "Only the leader",
+          "first": "Only the first one",
+          "why": "Multi-master."
+        },
+        "ack": {
+          "q": "By default an INSERT returns after how many replicas have the part?",
+          "one": "One",
+          "all": "All",
+          "majority": "A majority",
+          "why": "One (insert_quorum = 0)."
+        },
+        "copies": {
+          "q": "{replicas} replicas, {inserts} INSERTs, all replicated. How many part copies exist (before merges)?",
+          "why": "{replicas} × {inserts} = {n}."
+        }
+      }
+    },
+    "11-2": {
+      "title": "insert_quorum",
+      "summary": "Wait for N replicas before the INSERT counts.",
+      "halls": {
+        "r1": "replica 1",
+        "r2": "replica 2"
+      },
+      "brief": {
+        "title": "Acknowledged where?",
+        "body": "By default (<code>insert_quorum = 0</code>) an INSERT is acknowledged as soon as one replica wrote it. If that replica dies before the others fetch, the data isn't anywhere else yet. <code>insert_quorum = 2</code> (or <code>''auto''</code>, a majority) makes the INSERT wait until that many replicas have the part, and fail after <code>insert_quorum_timeout</code> (600 s). Reads only see quorum data with <code>select_sequential_consistency = 1</code>."
+      },
+      "zero": {
+        "q": "Replica 2 is down. INSERT with the default insert_quorum = 0. What happens?",
+        "ok": "It succeeds; only replica 1 has the rows",
+        "fails": "It fails",
+        "waits": "It waits for replica 2",
+        "why": "It succeeds with a single copy. Replica 2 will fetch it when it's back."
+      },
+      "two": {
+        "q": "Replica 2 still down. The same INSERT with insert_quorum = 2?",
+        "timeout": "It waits, then fails: quorum not reached",
+        "ok": "It succeeds",
+        "partial": "Half the rows go in",
+        "why": "Only one replica can confirm, so after insert_quorum_timeout the INSERT fails and the client must retry."
+      },
+      "durable": {
+        "title": "Durable writes",
+        "body": "Make an INSERT that's acknowledged only once both replicas have it.",
+        "revive": "Bring replica 2 back",
+        "quorum": "insert_quorum",
+        "quorums": {
+          "0": "0",
+          "2": "2"
+        },
+        "insert": "INSERT on replica 1",
+        "success": "Replica 2 caught up from the log, and the quorum INSERT returned only after both replicas had the part."
+      },
+      "check": {
+        "default": {
+          "q": "Default insert_quorum?",
+          "zero": "0 (off)",
+          "two": "2",
+          "all": "All replicas",
+          "why": "Off: one replica acknowledges."
+        },
+        "auto": {
+          "q": "insert_quorum = 'auto' means…",
+          "majority": "A majority of replicas",
+          "all": "All replicas",
+          "one": "One replica",
+          "why": "Majority."
+        },
+        "reads": {
+          "q": "For reads that only see quorum-inserted data you also need…",
+          "sequential": "select_sequential_consistency = 1",
+          "nothing": "Nothing else",
+          "final": "FINAL",
+          "why": "Quorum alone doesn't make every read consistent."
+        },
+        "down": {
+          "q": "insert_quorum = 2 with only one replica up. The INSERT…",
+          "timeout": "Fails after insert_quorum_timeout",
+          "succeeds": "Succeeds",
+          "queued": "Is queued forever",
+          "why": "It can't reach the quorum."
+        }
+      }
+    },
+    "11-3": {
+      "title": "ClickHouse Keeper",
+      "summary": "Coordination, not storage: logs and metadata, with a majority.",
+      "halls": {
+        "r1": "replica 1",
+        "r2": "replica 2"
+      },
+      "brief": {
+        "title": "The coordinator",
+        "body": "<b>ClickHouse Keeper</b> (Raft, ZooKeeper-compatible) keeps the <b>metadata</b>: replication logs, which parts each replica has, insert dedup hashes, the ON CLUSTER DDL queue. <b>Not the data</b>. It needs a <b>majority</b> of its nodes: 3 nodes survive 1 failure, 5 survive 2 (2F + 1). Without a majority, replicated tables go read-only."
+      },
+      "what": {
+        "q": "What does Keeper store for this table?",
+        "metadata": "The replication log and metadata",
+        "rows": "The rows",
+        "both": "Both",
+        "why": "Metadata only; the parts live on the replicas' disks."
+      },
+      "one": {
+        "q": "3 Keeper nodes, 1 fails. Can you still INSERT?",
+        "yes": "Yes: 2 of 3 is a majority",
+        "no": "No",
+        "why": "Yes: Raft needs a majority, and 2 of 3 is enough."
+      },
+      "survive": {
+        "title": "Survive two failures",
+        "body": "Two Keeper nodes are going to fail. Choose the ensemble size so the cluster still takes INSERTs.",
+        "nodes": "Keeper nodes",
+        "counts": {
+          "3": "3",
+          "5": "5"
+        },
+        "fail": "Two Keeper nodes fail",
+        "insert": "INSERT",
+        "success": "5 nodes, 2 down, 3 up: still a majority. 2F + 1 nodes survive F failures."
+      },
+      "check": {
+        "stores": {
+          "q": "Keeper stores…",
+          "metadata": "Metadata: logs, part lists, dedup hashes, DDL queue",
+          "data": "Table data",
+          "both": "Data and metadata",
+          "why": "Never the data."
+        },
+        "nodes": {
+          "q": "How many Keeper nodes to survive {f} failure(s)?",
+          "why": "2 × {f} + 1 = {n}."
+        },
+        "lost": {
+          "q": "Keeper loses its majority. Replicated tables…",
+          "readonly": "Go read-only",
+          "fine": "Keep working",
+          "deleted": "Are dropped",
+          "why": "No coordination, no writes."
+        },
+        "onCluster": {
+          "q": "CREATE … ON CLUSTER runs…",
+          "eventually": "Eventually on each host, via a queue in Keeper",
+          "atomic": "Atomically everywhere",
+          "never": "Only locally",
+          "why": "Queued in Keeper; distributed_ddl_task_timeout = 180 s is how long the client waits."
+        }
+      }
+    },
+    "11-4": {
+      "title": "Shards and the Distributed table",
+      "summary": "A router over shards: rows go by sharding_key % shards.",
+      "halls": {
+        "s1": "shard 1 (user_id % 2 = 0)",
+        "s2": "shard 2 (user_id % 2 = 1)"
+      },
+      "brief": {
+        "title": "Split the data",
+        "body": "When one server isn't enough, data is split into <b>shards</b>. A <code>Distributed</code> table stores nothing: it <b>routes</b>. On INSERT each row goes to a shard by <code>sharding_key % total weight</code>; on SELECT it asks every shard and merges the answers. In open-source ClickHouse the INSERT is forwarded in the background by default; with Replicated tables use <code>internal_replication = true</code>."
+      },
+      "route": {
+        "q": "INSERT INTO events_all rows for users 5, 6, 7 and 8, sharded by user_id. How many land on shard 1 (user_id % 2 = 0)?",
+        "why": "2: users 6 and 8. Users 5 and 7 go to shard 2."
+      },
+      "read": {
+        "q": "SELECT count() FROM events_all. Which shards are read?",
+        "both": "Both, in parallel",
+        "one": "One",
+        "none": "None: the Distributed table has the data",
+        "why": "Both: each shard counts its own rows, the initiator adds them up."
+      },
+      "colocate": {
+        "title": "Keep a user together",
+        "body": "Rows are sharded by rand(). Change the sharding key so all of user 9's events land on one shard, then insert them.",
+        "key": "sharding key",
+        "keys": {
+          "rand()": "rand()",
+          "user_id": "user_id"
+        },
+        "insert": "INSERT 4 events of user 9",
+        "select": "SELECT … WHERE user_id = 9",
+        "success": "Sharding by user_id keeps each user's rows on one shard, so per-user queries and joins stay local. rand() spreads load evenly but scatters every user."
+      },
+      "check": {
+        "stores": {
+          "q": "A Distributed table…",
+          "router": "Stores nothing; routes inserts and queries to shards",
+          "data": "Stores a copy of all data",
+          "cache": "Caches query results",
+          "why": "It's a routing view."
+        },
+        "route": {
+          "q": "{shards} shards of equal weight, sharding key {key}. Which shard index (0-based) gets the row?",
+          "why": "{key} % {shards} = {n}."
+        },
+        "internal": {
+          "q": "With ReplicatedMergeTree shards, internal_replication = true writes to…",
+          "one": "One replica per shard; replication copies it",
+          "all": "Every replica directly",
+          "none": "No replica",
+          "why": "Replication does the rest."
+        },
+        "async": {
+          "q": "In open-source ClickHouse, an INSERT into a Distributed table is forwarded to shards…",
+          "background": "In the background by default",
+          "always": "Always synchronously",
+          "never": "Never",
+          "why": "distributed_foreground_insert = 0 by default (Cloud: 1)."
+        }
+      }
+    },
+    "11-5": {
+      "title": "SharedMergeTree & parallel replicas",
+      "summary": "In ClickHouse Cloud, data lives in object storage and compute scales out.",
+      "halls": {
+        "s3": "shared object storage (S3)"
+      },
+      "brief": {
+        "title": "Storage apart, compute apart",
+        "body": "In ClickHouse Cloud, <b>SharedMergeTree</b> keeps parts in <b>shared object storage</b> and metadata in Keeper. Replicas are <b>stateless compute</b>: adding one copies no data, and you scale without designing shards. <b>Parallel replicas</b> (Beta, opt-in with <code>enable_parallel_replicas</code>) split one query's granules across replicas."
+      },
+      "add": {
+        "q": "You add a third replica. How many parts must be copied to it?",
+        "why": "0: it reads the same shared storage. That's why scaling out takes seconds."
+      },
+      "split": {
+        "q": "With parallel replicas on and 3 replicas, a query reads 24 granules. How many does each replica read?",
+        "why": "8: the granule ranges are split between the replicas, like threads on one server."
+      },
+      "scale": {
+        "title": "Scale out for the big query",
+        "body": "This query must finish within 250 ms. Choose the number of replicas and whether to use parallel replicas, then run it.",
+        "replicas": "replicas",
+        "counts": {
+          "1": "1",
+          "2": "2",
+          "4": "4"
+        },
+        "parallel": "parallel replicas",
+        "values": {
+          "0": "off",
+          "1": "on"
+        },
+        "run": "SELECT sum(total) FROM orders",
+        "success": "4 replicas reading 6 granules each: 240 ms. Without parallel replicas, extra replicas help concurrency (more queries at once), not a single query."
+      },
+      "check": {
+        "where": {
+          "q": "Where does SharedMergeTree keep the data?",
+          "objectStorage": "In shared object storage",
+          "local": "On each replica's local disk",
+          "keeper": "In Keeper",
+          "why": "Object storage; Keeper holds metadata."
+        },
+        "shard": {
+          "q": "In ClickHouse Cloud, do you need to design shards to scale?",
+          "notNeeded": "No: add replicas over shared storage",
+          "required": "Yes, always",
+          "automatic": "Shards are created per table",
+          "why": "Scale by adding compute."
+        },
+        "parallel": {
+          "q": "Parallel replicas are…",
+          "optIn": "Opt-in (Beta)",
+          "always": "Always on",
+          "removed": "Removed",
+          "why": "enable_parallel_replicas = 0 by default."
+        },
+        "split": {
+          "q": "{replicas} replicas with parallel replicas, {granules} granules to read. Granules per replica?",
+          "why": "{granules} ÷ {replicas} = {n}."
+        }
+      }
     }
   },
   "map": {
@@ -2617,6 +3243,14 @@
     "w9": {
       "title": "Query execution",
       "body": "Parallel threads, PREWHERE, lazy materialization, hash joins and the build side, dictionaries and query_log."
+    },
+    "w10": {
+      "title": "Types & codecs",
+      "body": "The smallest type that fits, LowCardinality, the cost of Nullable, codecs chained with ZSTD and the JSON type."
+    },
+    "w11": {
+      "title": "Replication & sharding",
+      "body": "ReplicatedMergeTree and part fetches, Keeper, insert_quorum, shards behind a Distributed table, SharedMergeTree and parallel replicas."
     }
   },
   "code": {

@@ -126,7 +126,7 @@ export function Finale() {
     g.fillStyle = "#121214";
     g.textAlign = "center";
     g.font = `700 22px ${mono}`;
-    g.fillText(exam?.passed ? "EXAM" : "18/18", 1390, 184);
+    g.fillText(exam?.passed ? "EXAM" : `${ALL_LEVELS.length}/${ALL_LEVELS.length}`, 1390, 184);
     g.fillText(exam?.passed ? "PASSED" : "LEVELS", 1390, 212);
     const a = document.createElement("a");
     a.href = c.toDataURL("image/png");

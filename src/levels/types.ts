@@ -18,7 +18,9 @@ export type Concept =
   | "mutations" | "lightweight-delete" | "lightweight-update" | "ttl" | "tiered-storage"
   | "skip-index" | "bloom-filter" | "index-granularity" | "projections" | "condition-cache"
   | "mv-trigger" | "mv-backfill" | "mv-partial" | "mv-join" | "refreshable-mv" | "kafka-engine"
-  | "parallelism" | "prewhere" | "lazy-materialization" | "hash-join" | "dictionaries";
+  | "parallelism" | "prewhere" | "lazy-materialization" | "hash-join" | "dictionaries"
+  | "types" | "low-cardinality" | "nullable" | "codecs" | "json-type"
+  | "replication" | "insert-quorum" | "keeper" | "sharding" | "shared-merge-tree";
 
 export type Choice = { id: string; label: Msg };
 export type ChoiceInput = { type: "choice"; options: Choice[] };
@@ -33,7 +35,7 @@ export type StageApi = {
   setColumnSizes: (sizes: Record<string, number>) => Promise<void>;
   resetBoxes: () => Promise<void>;
   merge: (sources: string[], part: Part) => Promise<void>;
-  turnAway: (kind: "rejected" | "duplicate" | "full") => Promise<void>;
+  turnAway: (kind: "rejected" | "duplicate" | "full" | "quorum" | "readonly") => Promise<void>;
   dropParts: (names: string[]) => Promise<void>;
   mutateParts: (names: string[]) => Promise<void>;
   maskParts: (names: string[]) => Promise<void>;
@@ -42,6 +44,7 @@ export type StageApi = {
   maskRows: (part: string, rows: number[]) => Promise<void>;
   moveParts: (names: string[]) => Promise<void>;
   fillParts: (names: string[]) => Promise<void>;
+  relabelColumns: () => void;
 };
 
 export type TaskStats = {
@@ -118,6 +121,8 @@ export type LevelCtx = {
   ttlMerge: (column: string, days: number) => Promise<number>;
   /** Move whole parts to another disk. */
   moveParts: (names: string[], disk: string) => Promise<number>;
+  /** A replica fetches a part: the copy lands in another hall (partition). Not counted as an insert. */
+  replicate: (part: string, partition: string) => Promise<Part>;
   /** MATERIALIZE INDEX / PROJECTION (a mutation) for the parts that lack it. Returns how many parts. */
   materialize: (kind: "index" | "projection", name: string) => Promise<number>;
   /** Run a query and wait until Pico has walked it. */
@@ -160,7 +165,7 @@ export type Tool =
   | { type: "action"; id: string; label: Msg; icon?: "truck" | "repeat" | "trash" | "eraser" | "pencil" | "press" | "play"; tone?: "primary" | "accent" | "secondary" | "danger"; run: (ctx: LevelCtx) => Promise<unknown> };
 
 /** Live panels a step can show next to the stage. */
-export type Panel = "reading" | "parts" | "compression" | "partsMeter" | "index" | "explain" | "rows" | "mutations" | "ttl" | "disks" | "skipIndex" | "cache" | "queryLog";
+export type Panel = "reading" | "parts" | "compression" | "partsMeter" | "index" | "explain" | "rows" | "mutations" | "ttl" | "disks" | "skipIndex" | "cache" | "queryLog" | "keeper";
 
 export type Step =
   | { kind: "brief"; title: Msg; body: Msg; mapping?: { icon: string; thing: Msg; real: Msg }[]; breaks?: Msg; code?: string }
