@@ -151,7 +151,7 @@ export function DepotDesk() {
           setReady(true);
         }}
         labels={{
-          column: (name, type) => `${name}<small>${type}</small>`,
+          column: (name, type) => (name.includes(":") ? `<em>${name.split(":")[0]}</em>${name.split(":")[1]}<small>${type}</small>` : `${name}<small>${type}</small>`),
           part: (name) => name,
           dock: t("dock"),
           rows: "orders",

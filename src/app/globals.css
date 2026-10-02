@@ -235,3 +235,5 @@ button, a { touch-action: manipulation; }
 .hall-tag[data-disk="hot"] { border-color: #ffb547; }
 .hall-tag[data-disk="cold"] { border-color: #4fd1c5; }
 .hall-tag[data-disk="s3"] { border-color: #8a8cff; }
+.aisle-tag--proj { border-style: dashed; }
+.aisle-tag em { font-style: normal; color: var(--amber); margin-right: 0.35em; }

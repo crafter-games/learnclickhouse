@@ -158,6 +158,19 @@ export class DepotStage {
   private get columns() {
     return this.table.columns;
   }
+  /** Sticker colour of a column: a projection's hidden column wears its base column's colour. */
+  private colorOf(c: number) {
+    const col = this.columns[c];
+    const base = col?.projection ? this.columns.findIndex((x) => x.name === col.name.slice(col.projection!.length + 1)) : c;
+    return COLUMN_COLORS[Math.max(0, base) % COLUMN_COLORS.length];
+  }
+  /** Whether a part has a box in this column (patch parts: changed columns; projections: once built). */
+  private hasBox(part: Part, g: number, c: number) {
+    const col = this.columns[c];
+    if (part.patch) return part.data?.[g]?.[col.name] !== undefined;
+    if (col.projection) return !!part.projections?.[col.projection];
+    return true;
+  }
   private rackZ(c: number) {
     return c * AISLE;
   }
@@ -300,12 +313,12 @@ export class DepotStage {
       p.position.set(START_X - 1.0, 0, this.rackZ(c));
       this.scene.add(p);
       this.aisleProps.push(p);
-      const tag = label("aisle-tag", `<b style="background:${COLUMN_COLORS[c % COLUMN_COLORS.length]}"></b>${this.text.column(col.name, col.type)}`);
+      const tag = label(col.projection ? "aisle-tag aisle-tag--proj" : "aisle-tag", `<b style="background:${this.colorOf(c)}"></b>${this.text.column(col.name, col.type)}`);
       tag.obj.position.set(START_X - 1.0, 1.25, this.rackZ(c));
       this.scene.add(tag.obj);
       this.aisleTags.push(tag.inner);
     });
-    const stripes = this.columns.map((_, c) => `<i style="background:${COLUMN_COLORS[c % COLUMN_COLORS.length]}"></i>`).join("");
+    const stripes = this.columns.map((_, c) => `<i style="background:${this.colorOf(c)}"></i>`).join("");
     const row = label("aisle-tag aisle-tag--rows", `<span class="stripes">${stripes}</span>${this.text.rows}`);
     row.obj.position.set(START_X - 1.0, 1.25, this.rackZ(this.rowLine));
     this.scene.add(row.obj);
@@ -411,7 +424,7 @@ export class DepotStage {
       if (mesh.isMesh) mesh.material = (mesh.material as THREE.Material).clone();
     });
     // A sticker in the column's colour on the front face: which column this box holds
-    const sticker = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.18), new THREE.MeshStandardMaterial({ color: COLUMN_COLORS[c % COLUMN_COLORS.length], roughness: 0.6 }));
+    const sticker = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.18), new THREE.MeshStandardMaterial({ color: this.colorOf(c), roughness: 0.6 }));
     sticker.position.set(0, 0.3, 0.256);
     obj.add(sticker);
     obj.rotation.y = (((g * 7 + c * 3) % 5) - 2) * 0.03;
@@ -425,11 +438,7 @@ export class DepotStage {
     const all = boxes ?? [];
     if (!boxes)
       for (let g = 0; g < part.granules.length; g++)
-        for (let c = 0; c < this.columns.length; c++) {
-          // A patch part only carries the key and the changed columns
-          if (part.patch && part.data?.[g]?.[this.columns[c].name] === undefined) continue;
-          all.push(await this.makeBox(g, c));
-        }
+        for (let c = 0; c < this.columns.length; c++) if (this.hasBox(part, g, c)) all.push(await this.makeBox(g, c));
     const tag = label(part.patch ? "part-tag part-tag--patch" : "part-tag", this.text.part(part.name));
     this.scene.add(tag.obj);
     const section: Section = { part, x0: NaN, width: this.sectionWidth(part), boxes: all, tag: tag.obj, racks: [] };
@@ -700,6 +709,29 @@ export class DepotStage {
           this.options.onSound?.("seal");
         } else this.options.onSound?.("drop");
         await this.applyLayout(true);
+      }
+    });
+  }
+
+  /** MATERIALIZE PROJECTION: the boxes a part now has (its projection aisles) drop onto the shelf. */
+  fillParts(names: string[]): Promise<void> {
+    return this.queue(async () => {
+      for (const s of this.sections.filter((x) => names.includes(x.part.name))) {
+        const fresh: Box[] = [];
+        for (let g = 0; g < s.part.granules.length; g++)
+          for (let c = 0; c < this.columns.length; c++)
+            if (this.hasBox(s.part, g, c) && !s.boxes.some((b) => b.granule === g && b.column === c)) fresh.push(await this.makeBox(g, c));
+        s.boxes.push(...fresh);
+        await Promise.all(
+          fresh.map((b, i) =>
+            wait(i * 25).then(async () => {
+              const to = this.boxPos(s.x0, b);
+              await this.fly(b, to.clone().add(new THREE.Vector3(0, 2.2, 0)), to, 260, 0);
+              void this.squash(b);
+            }),
+          ),
+        );
+        if (fresh.length) this.options.onSound?.("seal");
       }
     });
   }

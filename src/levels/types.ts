@@ -15,7 +15,8 @@ export type Concept =
   | "granules" | "sparse-index" | "key-order" | "pk-not-unique" | "explain"
   | "partitions" | "partition-pruning" | "over-partition" | "drop-partition"
   | "replacing" | "final" | "summing" | "aggregating" | "collapsing"
-  | "mutations" | "lightweight-delete" | "lightweight-update" | "ttl" | "tiered-storage";
+  | "mutations" | "lightweight-delete" | "lightweight-update" | "ttl" | "tiered-storage"
+  | "skip-index" | "bloom-filter" | "index-granularity" | "projections" | "condition-cache";
 
 export type Choice = { id: string; label: Msg };
 export type ChoiceInput = { type: "choice"; options: Choice[] };
@@ -37,6 +38,7 @@ export type StageApi = {
   rewriteParts: (changes: { from: string; to: Part | null }[]) => Promise<void>;
   maskRows: (part: string, rows: number[]) => Promise<void>;
   moveParts: (names: string[]) => Promise<void>;
+  fillParts: (names: string[]) => Promise<void>;
 };
 
 export type TaskStats = {
@@ -113,6 +115,8 @@ export type LevelCtx = {
   ttlMerge: (column: string, days: number) => Promise<number>;
   /** Move whole parts to another disk. */
   moveParts: (names: string[], disk: string) => Promise<number>;
+  /** MATERIALIZE INDEX / PROJECTION (a mutation) for the parts that lack it. Returns how many parts. */
+  materialize: (kind: "index" | "projection", name: string) => Promise<number>;
   /** Run a query and wait until Pico has walked it. */
   query: (spec: QuerySpec) => Promise<QueryResult>;
   stage: StageApi;
@@ -153,7 +157,7 @@ export type Tool =
   | { type: "action"; id: string; label: Msg; icon?: "truck" | "repeat" | "trash" | "eraser" | "pencil" | "press" | "play"; tone?: "primary" | "accent" | "secondary" | "danger"; run: (ctx: LevelCtx) => Promise<unknown> };
 
 /** Live panels a step can show next to the stage. */
-export type Panel = "reading" | "parts" | "compression" | "partsMeter" | "index" | "explain" | "rows" | "mutations" | "ttl" | "disks";
+export type Panel = "reading" | "parts" | "compression" | "partsMeter" | "index" | "explain" | "rows" | "mutations" | "ttl" | "disks" | "skipIndex" | "cache";
 
 export type Step =
   | { kind: "brief"; title: Msg; body: Msg; mapping?: { icon: string; thing: Msg; real: Msg }[]; breaks?: Msg; code?: string }
@@ -190,6 +194,8 @@ export type Level = {
   initial?: { rows: number; options?: InsertOptions }[];
   /** Parts of logical rows already on the shelves (World 5 tables). */
   initialRows?: (Row[] | { rows: Row[]; options: InsertOptions })[];
+  /** Runs on the fresh table after the initial parts (e.g. ADD PROJECTION that old parts lack). */
+  setup?: (table: Table) => void;
   /** Initial dock settings (ctx.settings). */
   settings?: Record<string, Setting>;
   /** How key values print in panels (e.g. city index → name). */

@@ -29,6 +29,7 @@ function deferredStage() {
     rewriteParts: call("rewriteParts"),
     maskRows: call("maskRows"),
     moveParts: call("moveParts"),
+    fillParts: call("fillParts"),
   } as StageApi;
   return { api, attach: resolve };
 }
@@ -53,6 +54,7 @@ export class LevelSession {
       if (Array.isArray(i)) this.table.insertRows(i);
       else this.table.insertRows(i.rows, i.options);
     }
+    level.setup?.(this.table);
     const rng = seeded(newSeed());
     const stage = this.stage.api;
     const ctx: LevelCtx = {
@@ -213,6 +215,13 @@ export class LevelSession {
         this.changed();
         await stage.moveParts(moved.map((p) => p.name));
         return moved.length;
+      },
+      materialize: async (kind, name) => {
+        const parts = kind === "index" ? this.table.materializeIndex(name) : this.table.materializeProjection(name);
+        this.stats.mutations++;
+        this.changed();
+        if (kind === "projection") await stage.fillParts(parts.map((p) => p.name));
+        return parts.length;
       },
       query: async (spec: QuerySpec) => {
         const result = this.table.query(spec);

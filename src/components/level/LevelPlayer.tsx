@@ -311,11 +311,12 @@ export function LevelPlayer({ level, onRestart }: { level: Level; onRestart: () 
                 rewriteParts: (c) => s.rewriteParts(c),
                 maskRows: (p, r) => s.maskRows(p, r),
                 moveParts: (n) => s.moveParts(n),
+                fillParts: (n) => s.fillParts(n),
               });
               setStageReady(true);
             }}
             labels={{
-              column: (name, type) => `${name}<small>${type}</small>`,
+              column: (name, type) => (name.includes(":") ? `<em>${name.split(":")[0]}</em>${name.split(":")[1]}<small>${type}</small>` : `${name}<small>${type}</small>`),
               part: (name) => name,
               dock: ts("dock"),
               rows: ts("rows", { table: table.spec.name }),

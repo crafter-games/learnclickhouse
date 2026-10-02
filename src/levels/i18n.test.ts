@@ -4,7 +4,7 @@ import en from "../../messages/en.json";
 import es from "../../messages/es.json";
 
 // Every msg("…") and choices(…, "base", [ids]) in the level files must exist in both locales.
-const src = ["./world1.ts", "./world2.ts", "./world3.ts", "./world4.ts", "./world5.ts", "./world6.ts"].map((f) => readFileSync(new URL(f, import.meta.url), "utf8")).join("\n");
+const src = ["./world1.ts", "./world2.ts", "./world3.ts", "./world4.ts", "./world5.ts", "./world6.ts", "./world7.ts"].map((f) => readFileSync(new URL(f, import.meta.url), "utf8")).join("\n");
 const keys = new Set<string>();
 for (const m of src.matchAll(/msg\(\s*"([^"]+)"/g)) keys.add(m[1]);
 for (const m of src.matchAll(/choices\([^,]+,\s*"([^"]+)",\s*\[([^\]]+)\]/g)) for (const id of m[2].matchAll(/"([^"]+)"/g)) keys.add(`${m[1]}.${id[1]}`);

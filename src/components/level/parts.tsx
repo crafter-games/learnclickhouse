@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { motion } from "motion/react";
-import { Check, Eye, Package, Robot, Stack, Tag, Warehouse, X, ArrowsDownUp, Database, Rows, Truck, Gear, Clock, HardDrives, type Icon } from "@phosphor-icons/react";
+import { Check, Eye, Package, Robot, Stack, Tag, Warehouse, X, ArrowsDownUp, Database, Rows, Truck, Gear, Clock, HardDrives, Funnel, Lightning, type Icon } from "@phosphor-icons/react";
 import type { Input, Msg, Panel, Setting } from "@/levels/types";
 import type { QueryResult, QuerySpec, Table } from "@/sim/table";
 import { COLUMN_COLORS } from "@/stage/theme";
@@ -401,7 +401,7 @@ export function ExplainPanel({ last }: { last: Last }) {
       </p>
       {ex ? (
         <pre className="overflow-x-auto rounded-xl border border-white/10 bg-black/55 text-ink px-3 py-2 font-mono text-[13px] leading-relaxed">
-          {ex.map((e) => `${e.stage}\n  Parts: ${e.parts[0]}/${e.parts[1]}\n  Granules: ${e.granules[0]}/${e.granules[1]}`).join("\n")}
+          {ex.map((e) => `${e.stage}${e.name ? ` (${e.name})` : ""}\n  Parts: ${e.parts[0]}/${e.parts[1]}\n  Granules: ${e.granules[0]}/${e.granules[1]}`).join("\n")}
         </pre>
       ) : (
         <p className="text-base leading-snug text-ink-2">{t("noQuery")}</p>
@@ -455,6 +455,89 @@ export function RowsPanel({ table, last }: { table: Table; last: Last }) {
           <p className="mt-1.5 font-mono text-xs text-ink-2">{t("rowCount", { n: rows.length })}</p>
         </>
       )}
+    </div>
+  );
+}
+
+/** The skip index of the last query: one cell per index block and part (skipped, read, false positive). */
+export function SkipIndexPanel({ table, last }: { table: Table; last: Last }) {
+  const t = useTranslations("panels");
+  const skip = last?.result.skip;
+  const idx = (table.spec.indexes ?? []).find((i) => i.name === skip?.index) ?? table.spec.indexes?.[0];
+  const cell: Record<string, string> = { skip: "bg-paper-2 text-ink-2", read: "bg-read text-on-amber", fp: "bg-danger text-white", full: "bg-amber text-on-amber" };
+  return (
+    <div>
+      <p className={panelTitle}>
+        <Funnel weight="bold" /> {t("skipIndex")}
+      </p>
+      {idx ? (
+        <p className="mb-2 rounded-lg bg-black/40 px-2.5 py-1 font-mono text-[12px] text-amber">
+          INDEX {idx.name} {idx.column} TYPE {idx.type}
+          {idx.type === "set" ? `(${idx.n ?? 100})` : idx.type === "bloom_filter" && idx.fpr !== undefined ? `(${idx.fpr})` : ""} GRANULARITY {idx.granularity}
+        </p>
+      ) : (
+        <p className="mb-2 text-base leading-snug text-ink-2">{t("noIndex")}</p>
+      )}
+      {skip && (
+        <ul className="space-y-1.5">
+          {skip.parts.map((p) => (
+            <li key={p.part}>
+              <p className="font-mono text-xs text-ink-2">{p.part}</p>
+              {p.built ? (
+                <div className="mt-0.5 flex flex-wrap gap-1">
+                  {p.blocks.map((b, i) => (
+                    <span key={i} className={`grid h-6 min-w-6 place-items-center rounded px-1 font-mono text-[11px] font-bold ${cell[b]}`}>
+                      {b === "fp" ? "FP" : b === "full" ? "∞" : b === "skip" ? "–" : "✓"}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm font-bold text-amber">{t("notBuilt")}</p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+      {skip && <p className="mt-2 text-xs leading-snug text-ink-2">{t("skipLegend")}</p>}
+    </div>
+  );
+}
+
+/** Query condition cache: per part, the bits stored for the last query's filter (0 = no match). */
+export function CachePanel({ table, last }: { table: Table; last: Last }) {
+  const t = useTranslations("panels");
+  const w = last?.spec.where;
+  return (
+    <div>
+      <p className={panelTitle}>
+        <Lightning weight="bold" /> {t("cache")}
+      </p>
+      {!w ? (
+        <p className="text-base leading-snug text-ink-2">{t("noQuery")}</p>
+      ) : (
+        <ul className="space-y-1.5">
+          {table.activeParts.map((p) => {
+            const bits = table.conditionCache.get(`${p.name}|${w.column}|${w.min}|${w.max}`);
+            return (
+              <li key={p.name}>
+                <p className="font-mono text-xs text-ink-2">{p.name}</p>
+                {bits ? (
+                  <div className="mt-0.5 flex flex-wrap gap-1">
+                    {bits.map((b, i) => (
+                      <span key={i} className={`grid h-6 w-6 place-items-center rounded font-mono text-[12px] font-bold ${b ? "bg-read text-on-amber" : "bg-paper-2 text-ink-2"}`}>
+                        {b ? 1 : 0}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm font-bold text-amber">{t("cacheMiss")}</p>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {!!last?.result.cacheSkipped && <p className="mt-2 text-sm font-bold text-read">{t("cacheSkipped", { n: last.result.cacheSkipped })}</p>}
     </div>
   );
 }
@@ -566,6 +649,8 @@ export function Panels({ panels, table, last, format, settings = {} }: { panels:
         : p === "mutations" ? <MutationsPanel key={p} table={table} />
         : p === "ttl" ? <TtlPanel key={p} table={table} settings={settings} />
         : p === "disks" ? <DisksPanel key={p} table={table} settings={settings} />
+        : p === "skipIndex" ? <SkipIndexPanel key={p} table={table} last={last} />
+        : p === "cache" ? <CachePanel key={p} table={table} last={last} />
         : <CompressionPanel key={p} table={table} />,
       )}
     </div>

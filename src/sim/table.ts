@@ -19,13 +19,30 @@ export type ColumnSpec = {
   type: string;
   /** Average compressed bytes per row on disk (drives "bytes read") when no ratios are given. */
   bytesPerRow: number;
+  /** Distinct values 0…distinct-1 (projections sort by it). */
+  distinct?: number;
+  /** Hidden column of this projection (drawn as its own aisle, read only through the projection). */
+  projection?: string;
   /** Uncompressed bytes per row and compression ratios (sorted = the table is ordered by this column). */
   raw?: number;
   ratio?: { sorted: number; unsorted: number };
 };
 
-/** Key range of a granule per sorting-key column: [min, max] (inclusive). */
-export type Granule = { rows: number; min?: number; max?: number; keys?: Record<string, [number, number]> };
+/** What a granule holds in a non-key column: its range, and (when small) the exact values. */
+export type ColumnStats = { min: number; max: number; values?: number[] };
+
+/**
+ * Key range of a granule per sorting-key column: [min, max] (inclusive). `cols`: stats of other
+ * columns, for skip indexes and the query condition cache.
+ */
+export type Granule = { rows: number; min?: number; max?: number; keys?: Record<string, [number, number]>; cols?: Record<string, ColumnStats> };
+
+/** A data-skipping index: one summary per `granularity` granules. */
+export type SkipIndex = { name: string; column: string; type: "minmax" | "set" | "bloom_filter"; granularity: number; n?: number; fpr?: number };
+/** A projection: a hidden copy of `columns` inside every part, sorted by `orderBy`. */
+export type Projection = { name: string; orderBy: string; columns: string[] };
+/** A projection's hidden column on the shelves is named `<projection>:<column>`. */
+export const projColumn = (proj: string, col: string) => `${proj}:${col}`;
 
 /** How an insert's values are distributed: `distinct` values 0…distinct-1 per column. */
 export type KeyDistribution = Record<string, number>;
@@ -54,6 +71,10 @@ export type Part = {
   patch?: { targets: string[] };
   /** Disk / volume the part lives on (tiered storage). */
   disk?: string;
+  /** Skip indexes built for this part (ADD INDEX only covers new parts until MATERIALIZE INDEX). */
+  indexes?: string[];
+  /** Projections built for this part: their granules, sorted by the projection's key. */
+  projections?: Record<string, Granule[]>;
 };
 
 /** One entry of system.mutations. */
@@ -70,6 +91,8 @@ export type TableSettings = {
   dedupWindow?: number;
   /** Largest part (rows) the background merger will produce (stand-in for 150 GiB). */
   maxMergeRows?: number;
+  /** use_query_condition_cache (on by default since 25.4). */
+  conditionCache?: boolean;
 };
 
 export type TableSpec = {
@@ -84,6 +107,8 @@ export type TableSpec = {
   /** Table engine (default plain MergeTree). */
   engine?: Engine;
   settings?: TableSettings;
+  indexes?: SkipIndex[];
+  projections?: Projection[];
 };
 
 export type InsertOptions = {
@@ -98,6 +123,8 @@ export type InsertOptions = {
   quiet?: boolean;
   /** Disk / volume the new part is written to. */
   disk?: string;
+  /** Stats of non-key columns for granule `g` of `count` (skip indexes, condition cache). */
+  cols?: (g: number, count: number) => Record<string, ColumnStats>;
 };
 
 /** A filter on one column; `label` is how the SQL shows the value (e.g. a city name for index 2). */
@@ -120,7 +147,13 @@ export type QueryResult = {
   bytesRead: number;
   bytesTotal: number;
   /** EXPLAIN indexes = 1 style funnel: [stage, parts selected, parts total, granules selected, granules total]. */
-  explain: { stage: "Partition" | "PrimaryKey"; parts: [number, number]; granules: [number, number] }[];
+  explain: { stage: "Partition" | "PrimaryKey" | "Skip" | "Projection" | "Cache"; name?: string; parts: [number, number]; granules: [number, number] }[];
+  /** Per part, the skip index verdict per index block: skip, read (may match) or fp (bloom false positive). */
+  skip?: { index: string; parts: { part: string; built: boolean; blocks: ("skip" | "read" | "fp" | "full")[] }[] };
+  /** The projection the optimizer picked (in at least one part). */
+  projection?: string;
+  /** Granules skipped thanks to the query condition cache. */
+  cacheSkipped?: number;
   /** For tables with logical rows: what SELECT returns (FINAL applies the engine at read time). */
   rows?: Row[];
 };
@@ -217,6 +250,15 @@ export function rowGranules(data: Row[], orderBy: string[]): Granule[] {
   });
 }
 
+const cacheKey = (part: string, w: Where) => `${part}|${w.column}|${w.min}|${w.max}`;
+
+/** A stable pseudo-random number in [0, 1) for a string (FNV-1a). */
+function hash01(s: string) {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return (h >>> 0) / 2 ** 32;
+}
+
 export class Table {
   readonly events = new Emitter<TableEvent>();
   readonly parts: Part[] = [];
@@ -224,6 +266,8 @@ export class Table {
   private nextMutation = 1;
   private tokens: string[] = [];
   readonly mutations: Mutation[] = [];
+  /** Query condition cache: per (part, condition) one bit per granule (0 = no row can match). */
+  readonly conditionCache = new Map<string, boolean[]>();
 
   constructor(readonly spec: TableSpec) {}
 
@@ -316,6 +360,7 @@ export class Table {
       active: true,
       dist,
       disk: options.disk,
+      indexes: (this.spec.indexes ?? []).map((i) => i.name),
     };
   }
 
@@ -339,6 +384,8 @@ export class Table {
     }
     if (active >= this.settings.partsToDelay) this.events.emit({ type: "insertDelayed", partition, activeParts: active });
     const part = this.makePart(rows, partition, options);
+    if (options.cols) part.granules.forEach((g, i) => (g.cols = options.cols!(i, part.granules.length)));
+    for (const p of this.spec.projections ?? []) this.buildProjection(part, p);
     this.parts.push(part);
     if (!options.quiet) this.events.emit({ type: "partCreated", part });
     return part;
@@ -579,6 +626,79 @@ export class Table {
   }
 
   /** The key range a granule covers for a column, if the index knows it. */
+  /** ALTER TABLE … ADD INDEX: only parts written from now on get it. */
+  addIndex(index: SkipIndex) {
+    this.spec.indexes = [...(this.spec.indexes ?? []).filter((i) => i.name !== index.name), index];
+    // A redefined index is stale in the old parts
+    for (const p of this.activeParts) p.indexes = p.indexes?.filter((n) => n !== index.name);
+  }
+
+  /** ALTER TABLE … DROP INDEX. */
+  dropIndex(name: string) {
+    this.spec.indexes = (this.spec.indexes ?? []).filter((i) => i.name !== name);
+    for (const p of this.parts) p.indexes = p.indexes?.filter((n) => n !== name);
+  }
+
+  /** ALTER TABLE … MATERIALIZE INDEX (a mutation): build it for the parts that lack it. Returns them. */
+  materializeIndex(name: string): Part[] {
+    const todo = this.dataParts.filter((p) => !p.indexes?.includes(name));
+    for (const p of todo) p.indexes = [...(p.indexes ?? []), name];
+    return todo;
+  }
+
+  /** ALTER TABLE … ADD PROJECTION: hidden columns appear; only new parts get them until MATERIALIZE. */
+  addProjection(proj: Projection) {
+    if (this.spec.projections?.some((p) => p.name === proj.name)) return;
+    this.spec.projections = [...(this.spec.projections ?? []), proj];
+    for (const c of proj.columns) {
+      const base = this.columns.find((x) => x.name === c)!;
+      this.spec.columns = [...this.spec.columns, { ...base, name: projColumn(proj.name, c), projection: proj.name }];
+    }
+  }
+
+  /** ALTER TABLE … MATERIALIZE PROJECTION (a mutation): build it inside the parts that lack it. */
+  materializeProjection(name: string): Part[] {
+    const proj = this.spec.projections?.find((p) => p.name === name);
+    if (!proj) return [];
+    const todo = this.dataParts.filter((p) => !p.projections?.[name]);
+    for (const p of todo) this.buildProjection(p, proj);
+    return todo;
+  }
+
+  private buildProjection(part: Part, proj: Projection) {
+    const distinct = this.columns.find((c) => c.name === proj.orderBy)?.distinct ?? 1000;
+    part.projections = { ...(part.projections ?? {}), [proj.name]: sortedGranules(part.rows, [proj.orderBy], { [proj.orderBy]: distinct }) };
+  }
+
+  /** Does a column's stats leave room for a value in [min, max]? */
+  private mayMatch(st: ColumnStats | undefined, w: Where) {
+    if (!st) return true;
+    if (st.values) return st.values.some((v) => v >= w.min && v <= w.max);
+    return !(st.max < w.min || st.min > w.max);
+  }
+
+  /** A skip index's verdict for one index block (`granularity` granules) of a part. */
+  private blockVerdict(part: Part, block: number, idx: SkipIndex, w: Where): "skip" | "read" | "fp" | "full" {
+    const stats = part.granules.slice(block * idx.granularity, (block + 1) * idx.granularity).map((g) => g.cols?.[idx.column]);
+    if (stats.some((st) => !st)) return "read";
+    const all = stats as ColumnStats[];
+    if (idx.type === "minmax") {
+      const lo = Math.min(...all.map((st) => st.min));
+      const hi = Math.max(...all.map((st) => st.max));
+      return hi < w.min || lo > w.max ? "skip" : "read";
+    }
+    if (idx.type === "set") {
+      if (all.some((st) => !st.values)) return "full";
+      const vals = new Set(all.flatMap((st) => st.values!));
+      if (vals.size > (idx.n ?? 100)) return "full";
+      return [...vals].some((v) => v >= w.min && v <= w.max) ? "read" : "skip";
+    }
+    // bloom_filter: membership of one value; a hash collision is a false positive
+    if (w.min !== w.max) return "read";
+    if (all.some((st) => this.mayMatch(st, w))) return "read";
+    return hash01(`${part.name}|${block}|${w.min}`) < (idx.fpr ?? 0.025) ? "fp" : "skip";
+  }
+
   private rangeOf(g: Granule, col: string): [number, number] | undefined {
     if (g.keys?.[col]) return g.keys[col];
     if (col === this.spec.orderBy?.[0] && g.min !== undefined && g.max !== undefined) return [g.min, g.max];
@@ -618,29 +738,67 @@ export class Table {
     const wanted = new Set(names);
     if (w) wanted.add(w.column);
     let afterPartition = { parts: 0, granules: 0 };
+    let pk = { parts: 0, granules: 0 };
+    let afterSkip = { parts: 0, granules: 0 };
+    let cacheSkipped = 0;
+    const idx = w ? (this.spec.indexes ?? []).find((i) => i.column === w.column) : undefined;
+    const proj = w ? (this.spec.projections ?? []).find((p) => p.orderBy === w.column && [...wanted].every((c) => p.columns.includes(c))) : undefined;
+    const useCache = !!w && this.spec.settings?.conditionCache === true;
+    const skip: NonNullable<QueryResult["skip"]> | undefined = idx ? { index: idx.name, parts: [] } : undefined;
+    let usedProjection = false;
+    const count = (xs: boolean[]) => xs.filter(Boolean).length;
     for (const part of this.activeParts) {
-      let partHit = false;
       const pruned = spec.partitions !== undefined && !spec.partitions.includes(part.partition);
       if (!pruned) afterPartition = { parts: afterPartition.parts + 1, granules: afterPartition.granules + part.granules.length };
+      const match = part.granules.map((g) => !pruned && (!w || !this.canSkip(g, w)));
+      if (count(match)) pk = { parts: pk.parts + 1, granules: pk.granules + count(match) };
+      if (idx && w) {
+        const built = !!part.indexes?.includes(idx.name);
+        const blocks: ("skip" | "read" | "fp" | "full")[] = [];
+        if (built)
+          for (let b = 0; b * idx.granularity < part.granules.length; b++) {
+            const v = this.blockVerdict(part, b, idx, w);
+            blocks.push(v);
+            if (v === "skip") for (let i = b * idx.granularity; i < Math.min(part.granules.length, (b + 1) * idx.granularity); i++) match[i] = false;
+          }
+        skip!.parts.push({ part: part.name, built, blocks });
+      }
+      if (count(match)) afterSkip = { parts: afterSkip.parts + 1, granules: afterSkip.granules + count(match) };
+      if (useCache) {
+        const bits = this.conditionCache.get(cacheKey(part.name, w!));
+        if (bits)
+          match.forEach((m, i) => {
+            if (m && !bits[i]) {
+              match[i] = false;
+              cacheSkipped++;
+            }
+          });
+      }
+      // The optimizer reads the projection instead when it needs fewer granules
+      const pgs = proj ? part.projections?.[proj.name] : undefined;
+      const pmatch = pgs ? pgs.map((g) => !pruned && !(g.keys![proj!.orderBy][1] < w!.min || g.keys![proj!.orderBy][0] > w!.max)) : undefined;
+      const viaProj = !!pmatch && count(pmatch) < count(match);
+      if (viaProj) usedProjection = true;
+      const reads = viaProj ? pmatch! : match;
+      if (count(reads)) {
+        granulesRead += count(reads);
+        partsRead++;
+      }
       part.granules.forEach((g, i) => {
         granulesTotal++;
-        const match = !pruned && (!w || !this.canSkip(g, w));
-        if (match) {
-          granulesRead++;
-          rowsRead += g.rows;
-          partHit = true;
-        }
+        if (reads[i]) rowsRead += g.rows;
         // A filter column is read too (PREWHERE reads it first). A row store can't read one column
         // alone: every value of the row sits in the same box.
         for (const col of this.columns) {
-          const read = match && (rowStore || wanted.has(col.name));
+          if (col.projection && !part.projections?.[col.projection]) continue;
+          const name = col.projection ? col.name.slice(col.projection.length + 1) : col.name;
+          const read = col.projection ? viaProj && col.projection === proj!.name && reads[i] && wanted.has(name) : !viaProj && reads[i] && (rowStore || wanted.has(col.name));
           const bytes = g.rows * this.bytesPerRow(col);
           bytesTotal += bytes;
           if (read) bytesRead += bytes;
           boxes.push({ part: part.name, granule: i, column: col.name, read });
         }
       });
-      if (partHit) partsRead++;
     }
     const partsTotal = this.activeParts.length;
     let rows: Row[] | undefined;
@@ -654,12 +812,22 @@ export class Table {
     const explain: QueryResult["explain"] = [];
     if (spec.partitions) explain.push({ stage: "Partition", parts: [afterPartition.parts, partsTotal], granules: [afterPartition.granules, granulesTotal] });
     const base = spec.partitions ? afterPartition : { parts: partsTotal, granules: granulesTotal };
-    explain.push({ stage: "PrimaryKey", parts: [partsRead, base.parts], granules: [granulesRead, base.granules] });
-    return { boxes, boxesRead: boxes.filter((b) => b.read).length, boxesTotal: boxes.length, granulesRead, granulesTotal, partsRead, partsTotal, rowsRead, bytesRead, bytesTotal, explain, rows };
+    explain.push({ stage: "PrimaryKey", parts: [pk.parts, base.parts], granules: [pk.granules, base.granules] });
+    if (idx) explain.push({ stage: "Skip", name: idx.name, parts: [afterSkip.parts, pk.parts], granules: [afterSkip.granules, pk.granules] });
+    if (useCache && cacheSkipped) explain.push({ stage: "Cache", parts: [partsRead, afterSkip.parts], granules: [afterSkip.granules - cacheSkipped, afterSkip.granules] });
+    if (usedProjection) explain.push({ stage: "Projection", name: proj!.name, parts: [partsRead, partsTotal], granules: [granulesRead, granulesTotal] });
+    return { boxes, boxesRead: boxes.filter((b) => b.read).length, boxesTotal: boxes.length, granulesRead, granulesTotal, partsRead, partsTotal, rowsRead, bytesRead, bytesTotal, explain, rows, skip, projection: usedProjection ? proj!.name : undefined, cacheSkipped };
   }
 
   query(spec: QuerySpec): QueryResult {
     const result = this.plan(spec);
+    // The condition cache remembers, per part, which granules can match this filter
+    const w = spec.where;
+    if (w && this.spec.settings?.conditionCache)
+      for (const p of this.activeParts) {
+        const key = cacheKey(p.name, w);
+        if (!this.conditionCache.has(key)) this.conditionCache.set(key, p.granules.map((g) => this.mayMatch(g.cols?.[w.column], w) && !this.canSkip(g, w)));
+      }
     this.events.emit({ type: "queried", spec, result });
     return result;
   }

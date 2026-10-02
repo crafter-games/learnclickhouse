@@ -95,7 +95,14 @@
       "hot": "SSD (hot)",
       "s3": "S3 (cold)"
     },
-    "rowsShort": "{n} rows"
+    "rowsShort": "{n} rows",
+    "skipIndex": "Skip index",
+    "noIndex": "No skip index on this table.",
+    "notBuilt": "Not built for this part: read in full",
+    "skipLegend": "– skipped · ✓ may match, read · FP false positive · ∞ too many values",
+    "cache": "Query condition cache",
+    "cacheMiss": "No entry yet: read in full",
+    "cacheSkipped": "{n, plural, one {# granule} other {# granules}} skipped by the cache"
   },
   "tools": {
     "insert": "Insert orders",
@@ -1676,6 +1683,283 @@
           "why": "TTL can DELETE, move TO DISK/VOLUME, GROUP BY (roll up) or RECOMPRESS."
         }
       }
+    },
+    "7-1": {
+      "title": "Skip a block, not a row",
+      "summary": "minmax skip indexes, and why correlation decides everything.",
+      "brief": {
+        "title": "Summaries that say “not here”",
+        "body": "The primary index only knows the ORDER BY columns. A <b>skip index</b> adds a tiny summary of another column per block of granules, e.g. <code>minmax</code>: the lowest and highest value. It can't find rows: it can only rule out blocks that <b>can't</b> match. So it only helps when the column is <b>correlated with the sorting key</b>; here <code>order_id</code> grows with the date, <code>total</code> is all over the place."
+      },
+      "order": {
+        "q": "SELECT … WHERE order_id = 3500, with minmax on order_id. How many of the 8 granules are read?",
+        "why": "1: each granule holds a narrow order_id range, so only the one with 3000–3999 can match."
+      },
+      "total": {
+        "q": "SELECT … WHERE total = 500, with minmax on total. How many of the 8 granules are read?",
+        "why": "8: every granule has totals from ~0 to ~999, so 500 fits in all of them. The index is checked and skips nothing."
+      },
+      "cleanup": {
+        "title": "An index that pays its way",
+        "body": "Run both queries and look at the index blocks. Then drop the index that never skips anything: it costs work on every INSERT and is checked on every read.",
+        "qOrder": "WHERE order_id = 6200",
+        "qTotal": "WHERE total = 120",
+        "drop": "DROP INDEX idx_total",
+        "success": "idx_order skips 7 of 8 granules; idx_total never skipped one. A skip index is a bet on correlation: measure before you keep it."
+      },
+      "check": {
+        "what": {
+          "q": "What does a skip index do?",
+          "blocks": "Rules out blocks of granules that can't match",
+          "rows": "Finds the matching rows directly",
+          "sort": "Keeps the column sorted",
+          "why": "It only skips blocks; matched blocks are still read in full."
+        },
+        "correlation": {
+          "q": "When does a minmax skip index help?",
+          "correlated": "When the column is correlated with the sorting key",
+          "random": "When values are random",
+          "any": "Always",
+          "why": "Correlated values give narrow ranges per block, so most blocks can be ruled out."
+        },
+        "random": {
+          "q": "A table has {n} granules and every granule spans the whole range of a column. With minmax on it, how many granules does an equality filter read?",
+          "why": "{n}: no block can be ruled out."
+        },
+        "cost": {
+          "q": "What does a skip index that never skips cost?",
+          "cost": "Work on every INSERT, disk, and a check on every read",
+          "free": "Nothing",
+          "faster": "It still speeds things up a little",
+          "why": "It's built on insert and merge and evaluated on reads, for no gain."
+        }
+      }
+    },
+    "7-2": {
+      "title": "set and bloom_filter",
+      "summary": "Few values per block, or one needle: pick the index type.",
+      "brief": {
+        "title": "Three summaries",
+        "body": "<code>minmax</code> keeps a range. <code>set(N)</code> keeps the distinct values of the block, up to N (more than N and it gives up for that block). <code>bloom_filter</code> answers “<b>maybe</b>” or “<b>definitely not</b>” for one value, with a false-positive rate (default 0.025). For words in text there's the <b>text index</b>, GA since 26.2."
+      },
+      "set": {
+        "q": "status takes 3 values (info, error, warn) and errors appear in 1 granule out of 8. With set(10) on status, how many granules does WHERE status = error read?",
+        "why": "1: the set of every other block is [info, warn], so they're skipped. minmax would read all 8: error sits between info and warn."
+      },
+      "bloom": {
+        "q": "trace_id = 42 lives in exactly one granule. With bloom_filter(0.25), how many granules are read?",
+        "one": "Exactly one",
+        "oneplus": "At least one, maybe a few more",
+        "all": "All of them",
+        "why": "The bloom filter never misses the right granule, but with a 25% false-positive rate other blocks can say “maybe” too. Here 2 false positives cost 2 extra granules."
+      },
+      "pick": {
+        "title": "The right summary for each column",
+        "body": "Choose an index type for each column so both queries read at most 2 granules.",
+        "statusIdx": "Index on status",
+        "traceIdx": "Index on trace_id",
+        "types": {
+          "minmax": "minmax",
+          "set": "set(10)",
+          "bloom_filter": "bloom_filter"
+        },
+        "qStatus": "WHERE status = 'error'",
+        "qTrace": "WHERE trace_id = 42",
+        "success": "Low cardinality per block → set. One needle among many values → bloom_filter (with the real default rate, 0.025). Ranges on correlated columns → minmax."
+      },
+      "check": {
+        "bloom": {
+          "q": "A bloom filter says a value is in a block. It means…",
+          "maybe": "Maybe: it could be a false positive",
+          "exact": "Definitely there",
+          "range": "The block's range contains it",
+          "why": "“Maybe”. Only “not there” is certain."
+        },
+        "fpr": {
+          "q": "Default false-positive rate of bloom_filter()?",
+          "p025": "0.025",
+          "p0": "0 (exact)",
+          "p50": "0.5",
+          "why": "0.025 (2.5%)."
+        },
+        "set": {
+          "q": "A block has more distinct values than set(N) allows. The index…",
+          "giveUp": "Can't skip that block",
+          "error": "Throws an error",
+          "sample": "Keeps a sample",
+          "why": "It stores nothing useful for that block, so the block is read."
+        },
+        "text": {
+          "q": "To search words inside a text column, use…",
+          "text": "The text index (GA in 26.2)",
+          "minmax": "minmax",
+          "projection": "A projection",
+          "why": "The text (inverted) index maps tokens to rows."
+        }
+      }
+    },
+    "7-3": {
+      "title": "GRANULARITY and MATERIALIZE",
+      "summary": "How big an index block is, and why ADD INDEX doesn't touch old data.",
+      "brief": {
+        "title": "Blocks of granules",
+        "body": "<code>GRANULARITY 4</code> means one summary per <b>4 granules</b> (4 × 8,192 rows), not per 4 rows. Bigger blocks make a smaller index but skip in coarser steps. And <code>ADD INDEX</code> only builds the index for <b>new parts</b>: existing parts need <code>MATERIALIZE INDEX</code>, a mutation."
+      },
+      "added": {
+        "q": "ADD INDEX (minmax, GRANULARITY 4) on the existing table, then WHERE order_id = 3500. How many of 8 granules are read?",
+        "why": "8: the old part has no index yet. ADD INDEX only covers parts written from now on."
+      },
+      "materialized": {
+        "q": "Now MATERIALIZE INDEX. Same query: how many granules?",
+        "why": "4: the index exists, but one summary covers 4 granules, so the whole block with order 3500 is read."
+      },
+      "tune": {
+        "title": "Finer steps",
+        "body": "Pick a GRANULARITY so the query reads a single granule, then rebuild the index.",
+        "gran": "GRANULARITY",
+        "grans": {
+          "1": "1",
+          "2": "2",
+          "4": "4",
+          "8": "8"
+        },
+        "rebuild": "Rebuild + query",
+        "success": "GRANULARITY 1: one summary per granule, the finest step. Coarser blocks are cheaper to store and check, so tune it to how selective your filters are."
+      },
+      "check": {
+        "rows": {
+          "q": "GRANULARITY {n} with the default index_granularity of 8,192: how many rows does one index block cover?",
+          "why": "{n} × 8,192 = {rows}."
+        },
+        "add": {
+          "q": "ALTER TABLE … ADD INDEX on a table full of data…",
+          "newOnly": "Indexes only parts written from now on",
+          "all": "Indexes every part at once",
+          "none": "Does nothing until restart",
+          "why": "New parts only; MATERIALIZE INDEX builds it for the rest."
+        },
+        "materialize": {
+          "q": "MATERIALIZE INDEX is…",
+          "mutation": "A mutation over the existing parts",
+          "instant": "Instant metadata",
+          "merge": "A merge of all parts",
+          "why": "A mutation (see system.mutations)."
+        },
+        "tradeoff": {
+          "q": "A bigger GRANULARITY gives…",
+          "coarse": "A smaller index that skips in coarser steps",
+          "finer": "Finer skipping",
+          "same": "No difference",
+          "why": "Fewer summaries, but each block is bigger."
+        }
+      }
+    },
+    "7-4": {
+      "title": "Projections",
+      "summary": "A second sort order hidden inside every part.",
+      "brief": {
+        "title": "Another order, same table",
+        "body": "The table is sorted by date, but a dashboard filters by customer. A <b>projection</b> stores a hidden copy of some columns <b>inside each part</b>, sorted another way. You never query it by name: the optimizer picks it when it reads fewer granules. It costs disk and work on every insert. Here it shows up as two dashed aisles, empty until it's built for the old part."
+      },
+      "before": {
+        "q": "The projection was just added. SELECT total WHERE customer_id = 1234: how many of 8 granules are read?",
+        "why": "8: the existing part doesn't have the projection yet (empty aisles), and the base table is sorted by date."
+      },
+      "after": {
+        "q": "After MATERIALIZE PROJECTION, which path does the query take?",
+        "proj": "The projection: 1 granule",
+        "base": "The base table: 8 granules",
+        "both": "Both at once",
+        "why": "The optimizer compares granules to read and takes the projection, sorted by customer_id."
+      },
+      "paths": {
+        "title": "Which path?",
+        "body": "Run the three queries and check EXPLAIN: which ones use the projection, and why not the others?",
+        "qDate": "WHERE date = 3",
+        "qCustomer": "WHERE customer_id = 4321",
+        "qStatus": "SELECT status WHERE customer_id = 4321",
+        "success": "By date: the base order wins. By customer: the projection. status isn't in the projection, so that query falls back to the base table and reads everything."
+      },
+      "check": {
+        "what": {
+          "q": "A projection is…",
+          "hidden": "A hidden, differently sorted copy inside each part",
+          "view": "A separate table you query by name",
+          "index": "A skip index",
+          "why": "It lives inside every part and is kept in sync by inserts and merges."
+        },
+        "query": {
+          "q": "How do you use a projection in a query?",
+          "auto": "You don't: the optimizer picks it",
+          "name": "SELECT … FROM the projection's name",
+          "hint": "With a mandatory hint",
+          "why": "Automatic, when it reads fewer granules."
+        },
+        "cost": {
+          "q": "What does a projection cost?",
+          "both": "Extra disk and extra work on every insert",
+          "free": "Nothing",
+          "reads": "Slower reads",
+          "why": "The data is stored twice (in another order)."
+        },
+        "missing": {
+          "q": "The query needs a column the projection doesn't have. ClickHouse…",
+          "base": "Uses the base table",
+          "error": "Throws an error",
+          "partial": "Mixes both",
+          "why": "The projection must contain every column the query needs."
+        }
+      }
+    },
+    "7-5": {
+      "title": "The query condition cache",
+      "summary": "Remember which granules can't match, per part and filter.",
+      "brief": {
+        "title": "One bit per granule",
+        "body": "<code>LIKE ''%timeout%''</code> can't use any index, so every granule is read. Since 25.4 the <b>query condition cache</b> (on by default) remembers, per part and filter, <b>one bit per granule</b>: 0 means no row there matched. Run the same filter again and the zeros are skipped. It doesn't store results (that's the query cache, off by default), and a <b>new part</b> has no bits yet."
+      },
+      "first": {
+        "q": "First run of WHERE message LIKE timeout. How many of 8 granules are read?",
+        "why": "8: no index can help with LIKE, and the cache is empty."
+      },
+      "second": {
+        "q": "Timeouts only appear in 2 granules. Same query again: how many are read?",
+        "why": "2: the cache stored a 0 for the 6 granules without matches, so they're skipped."
+      },
+      "fresh": {
+        "title": "New data arrives",
+        "body": "Insert a new part and run the query until it reads only the granules that can match, in both parts.",
+        "insert": "INSERT new logs",
+        "query": "WHERE message LIKE '%timeout%'",
+        "success": "The new part was read in full once, then its bits were cached too. Entries are per part, so merges and new inserts start fresh."
+      },
+      "check": {
+        "stores": {
+          "q": "What does the query condition cache store?",
+          "bits": "One bit per granule: can this filter match here?",
+          "results": "The query results",
+          "rows": "The matching rows",
+          "why": "Bits per (part, filter). The query cache is the one that stores results."
+        },
+        "default": {
+          "q": "Is the query condition cache on by default?",
+          "on": "Yes, since 25.4",
+          "off": "No",
+          "cloud": "Only in ClickHouse Cloud",
+          "why": "On by default since 25.4."
+        },
+        "second": {
+          "q": "A filter matches {hits} of {total} granules and the cache is warm. How many granules does the same query read?",
+          "why": "{hits}: the other {total} granules have a 0 bit."
+        },
+        "newPart": {
+          "q": "A new part arrives. The next run reads it…",
+          "full": "In full: it has no bits yet",
+          "cached": "Using the old part's bits",
+          "skipped": "Not at all",
+          "why": "Entries are per part; a new part starts empty."
+        }
+      }
     }
   },
   "map": {
@@ -1719,6 +2003,10 @@
     "w6": {
       "title": "Change & expire",
       "body": "Mutations, lightweight DELETE and UPDATE, TTL and tiered storage: changing or removing data in immutable parts."
+    },
+    "w7": {
+      "title": "Skip & project",
+      "body": "Data-skipping indexes (minmax, set, bloom_filter), GRANULARITY, projections and the query condition cache."
     }
   },
   "code": {

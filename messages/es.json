@@ -95,7 +95,14 @@
       "hot": "SSD (caliente)",
       "s3": "S3 (frío)"
     },
-    "rowsShort": "{n} filas"
+    "rowsShort": "{n} filas",
+    "skipIndex": "Índice de salto",
+    "noIndex": "Esta tabla no tiene índice de salto.",
+    "notBuilt": "No está construido en esta part: se lee entera",
+    "skipLegend": "– saltado · ✓ puede coincidir, se lee · FP falso positivo · ∞ demasiados valores",
+    "cache": "Query condition cache",
+    "cacheMiss": "Aún sin entrada: se lee entera",
+    "cacheSkipped": "{n, plural, one {# granule saltado} other {# granules saltados}} gracias a la caché"
   },
   "tools": {
     "insert": "Insertar pedidos",
@@ -1676,6 +1683,283 @@
           "why": "El TTL puede hacer DELETE, mover TO DISK/VOLUME, GROUP BY (resumir) o RECOMPRESS."
         }
       }
+    },
+    "7-1": {
+      "title": "Saltar un bloque, no una fila",
+      "summary": "Índices de salto minmax, y por qué la correlación lo decide todo.",
+      "brief": {
+        "title": "Resúmenes que dicen “aquí no”",
+        "body": "El índice primario solo conoce las columnas del ORDER BY. Un <b>índice de salto</b> añade un resumen diminuto de otra columna por bloque de granules, por ejemplo <code>minmax</code>: el valor más bajo y el más alto. No encuentra filas: solo descarta bloques que <b>no pueden</b> coincidir. Por eso solo ayuda si la columna está <b>correlacionada con la clave de orden</b>; aquí <code>order_id</code> crece con la fecha y <code>total</code> está por todas partes."
+      },
+      "order": {
+        "q": "SELECT … WHERE order_id = 3500, con minmax sobre order_id. ¿Cuántos de los 8 granules se leen?",
+        "why": "1: cada granule tiene un rango estrecho de order_id, así que solo el de 3000–3999 puede coincidir."
+      },
+      "total": {
+        "q": "SELECT … WHERE total = 500, con minmax sobre total. ¿Cuántos de los 8 granules se leen?",
+        "why": "8: todos los granules tienen totales de ~0 a ~999, así que 500 cabe en todos. El índice se consulta y no salta nada."
+      },
+      "cleanup": {
+        "title": "Un índice que se gane el sueldo",
+        "body": "Lanza las dos consultas y mira los bloques del índice. Luego elimina el índice que nunca salta nada: cuesta trabajo en cada INSERT y se consulta en cada lectura.",
+        "qOrder": "WHERE order_id = 6200",
+        "qTotal": "WHERE total = 120",
+        "drop": "DROP INDEX idx_total",
+        "success": "idx_order salta 7 de 8 granules; idx_total no saltó ninguno. Un índice de salto es una apuesta por la correlación: mide antes de quedártelo."
+      },
+      "check": {
+        "what": {
+          "q": "¿Qué hace un índice de salto?",
+          "blocks": "Descarta bloques de granules que no pueden coincidir",
+          "rows": "Encuentra directamente las filas",
+          "sort": "Mantiene la columna ordenada",
+          "why": "Solo salta bloques; los que pasan se leen enteros."
+        },
+        "correlation": {
+          "q": "¿Cuándo ayuda un índice minmax?",
+          "correlated": "Cuando la columna está correlacionada con la clave de orden",
+          "random": "Cuando los valores son aleatorios",
+          "any": "Siempre",
+          "why": "Con valores correlacionados cada bloque tiene un rango estrecho y casi todos se descartan."
+        },
+        "random": {
+          "q": "Una tabla tiene {n} granules y cada uno abarca todo el rango de una columna. Con minmax sobre ella, ¿cuántos granules lee un filtro de igualdad?",
+          "why": "{n}: no se puede descartar ningún bloque."
+        },
+        "cost": {
+          "q": "¿Qué cuesta un índice de salto que nunca salta?",
+          "cost": "Trabajo en cada INSERT, disco y una comprobación en cada lectura",
+          "free": "Nada",
+          "faster": "Igual acelera un poco",
+          "why": "Se construye al insertar y fusionar y se evalúa al leer, sin ganar nada."
+        }
+      }
+    },
+    "7-2": {
+      "title": "set y bloom_filter",
+      "summary": "Pocos valores por bloque, o una aguja: elige el tipo de índice.",
+      "brief": {
+        "title": "Tres resúmenes",
+        "body": "<code>minmax</code> guarda un rango. <code>set(N)</code> guarda los valores distintos del bloque, hasta N (si hay más, se rinde en ese bloque). <code>bloom_filter</code> responde “<b>quizá</b>” o “<b>seguro que no</b>” para un valor, con una tasa de falsos positivos (0.025 por defecto). Para palabras dentro de un texto está el <b>text index</b>, GA desde 26.2."
+      },
+      "set": {
+        "q": "status tiene 3 valores (info, error, warn) y los errores aparecen en 1 granule de 8. Con set(10) sobre status, ¿cuántos granules lee WHERE status = error?",
+        "why": "1: el set de los demás bloques es [info, warn], así que se saltan. minmax leería los 8: error está entre info y warn."
+      },
+      "bloom": {
+        "q": "trace_id = 42 vive en un único granule. Con bloom_filter(0.25), ¿cuántos granules se leen?",
+        "one": "Exactamente uno",
+        "oneplus": "Al menos uno, quizá algunos más",
+        "all": "Todos",
+        "why": "El bloom filter nunca se salta el granule bueno, pero con un 25% de falsos positivos otros bloques también dicen “quizá”. Aquí 2 falsos positivos cuestan 2 granules de más."
+      },
+      "pick": {
+        "title": "El resumen justo para cada columna",
+        "body": "Elige un tipo de índice para cada columna de modo que las dos consultas lean como mucho 2 granules.",
+        "statusIdx": "Índice en status",
+        "traceIdx": "Índice en trace_id",
+        "types": {
+          "minmax": "minmax",
+          "set": "set(10)",
+          "bloom_filter": "bloom_filter"
+        },
+        "qStatus": "WHERE status = 'error'",
+        "qTrace": "WHERE trace_id = 42",
+        "success": "Pocos valores por bloque → set. Una aguja entre muchos valores → bloom_filter (con la tasa real por defecto, 0.025). Rangos en columnas correlacionadas → minmax."
+      },
+      "check": {
+        "bloom": {
+          "q": "Un bloom filter dice que un valor está en un bloque. Significa…",
+          "maybe": "Quizá: puede ser un falso positivo",
+          "exact": "Que seguro está",
+          "range": "Que el rango del bloque lo contiene",
+          "why": "“Quizá”. Solo el “no está” es seguro."
+        },
+        "fpr": {
+          "q": "¿Tasa de falsos positivos por defecto de bloom_filter()?",
+          "p025": "0.025",
+          "p0": "0 (exacto)",
+          "p50": "0.5",
+          "why": "0.025 (2,5%)."
+        },
+        "set": {
+          "q": "Un bloque tiene más valores distintos de los que permite set(N). El índice…",
+          "giveUp": "No puede saltar ese bloque",
+          "error": "Lanza un error",
+          "sample": "Guarda una muestra",
+          "why": "No guarda nada útil para ese bloque, así que se lee."
+        },
+        "text": {
+          "q": "Para buscar palabras dentro de una columna de texto, usa…",
+          "text": "El text index (GA en 26.2)",
+          "minmax": "minmax",
+          "projection": "Una proyección",
+          "why": "El text index (invertido) relaciona tokens con filas."
+        }
+      }
+    },
+    "7-3": {
+      "title": "GRANULARITY y MATERIALIZE",
+      "summary": "Cuánto mide un bloque del índice, y por qué ADD INDEX no toca los datos viejos.",
+      "brief": {
+        "title": "Bloques de granules",
+        "body": "<code>GRANULARITY 4</code> significa un resumen cada <b>4 granules</b> (4 × 8.192 filas), no cada 4 filas. Bloques más grandes dan un índice más pequeño pero saltan a pasos más gruesos. Y <code>ADD INDEX</code> solo construye el índice para las <b>parts nuevas</b>: las que ya existen necesitan <code>MATERIALIZE INDEX</code>, que es una mutación."
+      },
+      "added": {
+        "q": "ADD INDEX (minmax, GRANULARITY 4) sobre la tabla existente y luego WHERE order_id = 3500. ¿Cuántos de 8 granules se leen?",
+        "why": "8: la part vieja aún no tiene índice. ADD INDEX solo cubre las parts que se escriban a partir de ahora."
+      },
+      "materialized": {
+        "q": "Ahora MATERIALIZE INDEX. Misma consulta: ¿cuántos granules?",
+        "why": "4: el índice existe, pero un resumen cubre 4 granules, así que se lee el bloque entero donde está el pedido 3500."
+      },
+      "tune": {
+        "title": "Pasos más finos",
+        "body": "Elige una GRANULARITY para que la consulta lea un solo granule y reconstruye el índice.",
+        "gran": "GRANULARITY",
+        "grans": {
+          "1": "1",
+          "2": "2",
+          "4": "4",
+          "8": "8"
+        },
+        "rebuild": "Reconstruir + consultar",
+        "success": "GRANULARITY 1: un resumen por granule, el paso más fino. Los bloques gruesos cuestan menos de guardar y comprobar, así que ajústala a lo selectivos que sean tus filtros."
+      },
+      "check": {
+        "rows": {
+          "q": "GRANULARITY {n} con el index_granularity por defecto de 8.192: ¿cuántas filas cubre un bloque del índice?",
+          "why": "{n} × 8.192 = {rows}."
+        },
+        "add": {
+          "q": "ALTER TABLE … ADD INDEX sobre una tabla llena de datos…",
+          "newOnly": "Indexa solo las parts que se escriban desde ahora",
+          "all": "Indexa todas las parts al instante",
+          "none": "No hace nada hasta reiniciar",
+          "why": "Solo parts nuevas; MATERIALIZE INDEX lo construye para las demás."
+        },
+        "materialize": {
+          "q": "MATERIALIZE INDEX es…",
+          "mutation": "Una mutación sobre las parts existentes",
+          "instant": "Metadatos instantáneos",
+          "merge": "Un merge de todas las parts",
+          "why": "Una mutación (mira system.mutations)."
+        },
+        "tradeoff": {
+          "q": "Una GRANULARITY mayor da…",
+          "coarse": "Un índice más pequeño que salta a pasos más gruesos",
+          "finer": "Saltos más finos",
+          "same": "Ninguna diferencia",
+          "why": "Menos resúmenes, pero cada bloque es más grande."
+        }
+      }
+    },
+    "7-4": {
+      "title": "Proyecciones",
+      "summary": "Un segundo orden escondido dentro de cada part.",
+      "brief": {
+        "title": "Otro orden, la misma tabla",
+        "body": "La tabla está ordenada por fecha, pero un dashboard filtra por cliente. Una <b>proyección</b> guarda una copia oculta de algunas columnas <b>dentro de cada part</b>, ordenada de otra forma. Nunca la consultas por su nombre: el optimizador la elige cuando lee menos granules. Cuesta disco y trabajo en cada insert. Aquí aparece como dos pasillos discontinuos, vacíos hasta que se construye para la part vieja."
+      },
+      "before": {
+        "q": "La proyección se acaba de añadir. SELECT total WHERE customer_id = 1234: ¿cuántos de 8 granules se leen?",
+        "why": "8: la part existente aún no tiene la proyección (pasillos vacíos) y la tabla base está ordenada por fecha."
+      },
+      "after": {
+        "q": "Después de MATERIALIZE PROJECTION, ¿qué camino toma la consulta?",
+        "proj": "La proyección: 1 granule",
+        "base": "La tabla base: 8 granules",
+        "both": "Los dos a la vez",
+        "why": "El optimizador compara cuántos granules leería y elige la proyección, ordenada por customer_id."
+      },
+      "paths": {
+        "title": "¿Qué camino?",
+        "body": "Lanza las tres consultas y mira EXPLAIN: ¿cuáles usan la proyección y por qué las otras no?",
+        "qDate": "WHERE date = 3",
+        "qCustomer": "WHERE customer_id = 4321",
+        "qStatus": "SELECT status WHERE customer_id = 4321",
+        "success": "Por fecha gana el orden base. Por cliente, la proyección. status no está en la proyección, así que esa consulta vuelve a la tabla base y lo lee todo."
+      },
+      "check": {
+        "what": {
+          "q": "Una proyección es…",
+          "hidden": "Una copia oculta y ordenada de otra forma dentro de cada part",
+          "view": "Una tabla aparte que consultas por nombre",
+          "index": "Un índice de salto",
+          "why": "Vive dentro de cada part y los inserts y merges la mantienen al día."
+        },
+        "query": {
+          "q": "¿Cómo usas una proyección en una consulta?",
+          "auto": "No haces nada: la elige el optimizador",
+          "name": "SELECT … FROM el nombre de la proyección",
+          "hint": "Con una pista obligatoria",
+          "why": "Automático, cuando lee menos granules."
+        },
+        "cost": {
+          "q": "¿Qué cuesta una proyección?",
+          "both": "Disco extra y trabajo extra en cada insert",
+          "free": "Nada",
+          "reads": "Lecturas más lentas",
+          "why": "Los datos se guardan dos veces (en otro orden)."
+        },
+        "missing": {
+          "q": "La consulta necesita una columna que la proyección no tiene. ClickHouse…",
+          "base": "Usa la tabla base",
+          "error": "Lanza un error",
+          "partial": "Mezcla las dos",
+          "why": "La proyección debe tener todas las columnas que necesita la consulta."
+        }
+      }
+    },
+    "7-5": {
+      "title": "La query condition cache",
+      "summary": "Recordar qué granules no pueden coincidir, por part y filtro.",
+      "brief": {
+        "title": "Un bit por granule",
+        "body": "<code>LIKE ''%timeout%''</code> no puede usar ningún índice, así que se leen todos los granules. Desde 25.4 la <b>query condition cache</b> (activa por defecto) recuerda, por part y filtro, <b>un bit por granule</b>: 0 significa que ahí no coincidió ninguna fila. Repite el mismo filtro y los ceros se saltan. No guarda resultados (eso es la query cache, desactivada por defecto) y una <b>part nueva</b> aún no tiene bits."
+      },
+      "first": {
+        "q": "Primera ejecución de WHERE message LIKE timeout. ¿Cuántos de 8 granules se leen?",
+        "why": "8: ningún índice ayuda con LIKE y la caché está vacía."
+      },
+      "second": {
+        "q": "Los timeouts solo aparecen en 2 granules. La misma consulta otra vez: ¿cuántos se leen?",
+        "why": "2: la caché guardó un 0 para los 6 granules sin coincidencias, así que se saltan."
+      },
+      "fresh": {
+        "title": "Llegan datos nuevos",
+        "body": "Inserta una part nueva y lanza la consulta hasta que lea solo los granules que pueden coincidir, en las dos parts.",
+        "insert": "INSERT de logs nuevos",
+        "query": "WHERE message LIKE '%timeout%'",
+        "success": "La part nueva se leyó entera una vez y luego también se guardaron sus bits. Las entradas son por part, así que los merges y los inserts nuevos empiezan de cero."
+      },
+      "check": {
+        "stores": {
+          "q": "¿Qué guarda la query condition cache?",
+          "bits": "Un bit por granule: ¿puede coincidir aquí este filtro?",
+          "results": "Los resultados de la consulta",
+          "rows": "Las filas que coinciden",
+          "why": "Bits por (part, filtro). La que guarda resultados es la query cache."
+        },
+        "default": {
+          "q": "¿Está activa por defecto la query condition cache?",
+          "on": "Sí, desde 25.4",
+          "off": "No",
+          "cloud": "Solo en ClickHouse Cloud",
+          "why": "Activa por defecto desde 25.4."
+        },
+        "second": {
+          "q": "Un filtro coincide en {hits} de {total} granules y la caché está caliente. ¿Cuántos granules lee la misma consulta?",
+          "why": "{hits}: el resto de los {total} granules tiene un bit a 0."
+        },
+        "newPart": {
+          "q": "Llega una part nueva. La siguiente ejecución la lee…",
+          "full": "Entera: aún no tiene bits",
+          "cached": "Con los bits de la part vieja",
+          "skipped": "Nada",
+          "why": "Las entradas son por part; una part nueva empieza vacía."
+        }
+      }
     }
   },
   "map": {
@@ -1719,6 +2003,10 @@
     "w6": {
       "title": "Cambiar y expirar",
       "body": "Mutaciones, DELETE y UPDATE ligeros, TTL y almacenamiento por niveles: cambiar o borrar datos en parts inmutables."
+    },
+    "w7": {
+      "title": "Saltar y proyectar",
+      "body": "Índices de salto (minmax, set, bloom_filter), GRANULARITY, proyecciones y la query condition cache."
     }
   },
   "code": {
