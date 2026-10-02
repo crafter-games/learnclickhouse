@@ -1,0 +1,35 @@
+{
+  "meta": {
+    "title": "Column Depot — Learn ClickHouse",
+    "description": "A warehouse game that teaches how ClickHouse really stores and reads data: columns, parts, merges, the sparse index and partitions. Unofficial."
+  },
+  "hud": {
+    "musicOn": "Turn music on",
+    "musicOff": "Turn music off",
+    "sfxOn": "Turn sound effects on",
+    "sfxOff": "Turn sound effects off",
+    "language": "Cambiar a español"
+  },
+  "desk": {
+    "loading": "Opening the depot…",
+    "dock": "Dock",
+    "insert": "Insert orders",
+    "full": "Shelves full",
+    "query": "Run query",
+    "columns": "Columns to read",
+    "objective": {
+      "insert": "Insert orders: every truck brings one sealed section (a part).",
+      "query": "Pick the columns, then run the query: Pico only walks the aisles you ask for.",
+      "again": "Try reading more or fewer columns and watch the counter."
+    },
+    "panel": {
+      "title": "What Pico read",
+      "hintInsert": "The depot is empty. Send a truck with orders first.",
+      "hintQuery": "Choose which columns the query needs and press Run.",
+      "boxes": "Boxes opened",
+      "bytes": "Bytes read",
+      "rows": "{rows} rows",
+      "verdict": "<b>{pct}%</b> of the bytes: the query names {cols} of {all} columns, so the other aisles were never opened."
+    }
+  }
+}

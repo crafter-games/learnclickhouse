@@ -1,0 +1,35 @@
+{
+  "meta": {
+    "title": "Column Depot — Aprende ClickHouse",
+    "description": "Un juego de almacén que enseña cómo ClickHouse guarda y lee los datos de verdad: columnas, parts, merges, el índice disperso y las particiones. No oficial."
+  },
+  "hud": {
+    "musicOn": "Activar música",
+    "musicOff": "Silenciar música",
+    "sfxOn": "Activar efectos de sonido",
+    "sfxOff": "Silenciar efectos de sonido",
+    "language": "Switch to English"
+  },
+  "desk": {
+    "loading": "Abriendo el almacén…",
+    "dock": "Muelle",
+    "insert": "Insertar pedidos",
+    "full": "Estanterías llenas",
+    "query": "Ejecutar consulta",
+    "columns": "Columnas que se leen",
+    "objective": {
+      "insert": "Inserta pedidos: cada camión trae una sección sellada (una part).",
+      "query": "Elige las columnas y ejecuta la consulta: Pico solo recorre los pasillos que pides.",
+      "again": "Prueba a leer más o menos columnas y mira el contador."
+    },
+    "panel": {
+      "title": "Lo que leyó Pico",
+      "hintInsert": "El almacén está vacío. Primero manda un camión con pedidos.",
+      "hintQuery": "Elige qué columnas necesita la consulta y pulsa Ejecutar.",
+      "boxes": "Cajas abiertas",
+      "bytes": "Bytes leídos",
+      "rows": "{rows} filas",
+      "verdict": "<b>{pct}%</b> de los bytes: la consulta nombra {cols} de {all} columnas, así que los otros pasillos ni se abrieron."
+    }
+  }
+}

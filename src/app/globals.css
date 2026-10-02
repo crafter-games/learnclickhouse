@@ -1,0 +1,140 @@
+@import "tailwindcss";
+
+/* Column Depot — cozy warehouse theme (GDD → Art direction). Palette sampled from the Kenney
+   Factory Kit (lavender floor, indigo structures) plus the Column Depot amber accent.
+   Roles: amber = depot / Pico / primary action, indigo = secondary action, teal = read, red = danger. */
+:root {
+  --ground: #d9d5ea;
+  --ground-2: #cfcae2;
+  --paper: #fbf8f3;
+  --paper-2: #f2eee6;
+  --ink: #2b2840;
+  --ink-2: #46435f;
+  --line: rgba(43, 40, 64, 0.12);
+  --amber: #f5b324;
+  --amber-dark: #b9800a;
+  --indigo: #5b5fc7;
+  --indigo-dark: #3d409b;
+  --read: #2fb5a3;
+  --read-dark: #1f8a7c;
+  --danger: #e5484d;
+  color-scheme: light;
+}
+
+@theme inline {
+  --color-ground: var(--ground);
+  --color-ground-2: var(--ground-2);
+  --color-paper: var(--paper);
+  --color-paper-2: var(--paper-2);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-line: var(--line);
+  --color-amber: var(--amber);
+  --color-amber-dark: var(--amber-dark);
+  --color-indigo: var(--indigo);
+  --color-indigo-dark: var(--indigo-dark);
+  --color-read: var(--read);
+  --color-read-dark: var(--read-dark);
+  --color-danger: var(--danger);
+  --font-display: var(--font-display);
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-code);
+}
+
+body {
+  background: #dad4ee;
+  color: var(--ink);
+  font-family: var(--font-ui), system-ui, sans-serif;
+  -webkit-tap-highlight-color: transparent;
+}
+
+button, a { touch-action: manipulation; }
+
+/* Paper card floating over the warehouse floor */
+.card {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset, 0 2px 0 rgba(43, 40, 64, 0.06), 0 16px 32px -18px rgba(43, 40, 64, 0.35);
+}
+
+/* ---------- 3D stage labels (CSS2DRenderer) ----------
+   em-based off --stage-zoom so tags follow the camera fit. Never CSS zoom (breaks positioning). */
+.aisle-tag, .part-tag, .stage-tag { white-space: nowrap; line-height: 1; }
+.aisle-tag {
+  display: flex;
+  align-items: center;
+  gap: 0.45em;
+  font: 800 calc(16px * var(--stage-zoom, 1)) var(--font-code);
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 0.7em;
+  padding: 0.45em 0.7em 0.45em 0.45em;
+  box-shadow: 0 0.2em 0 rgba(43, 40, 64, 0.14);
+  transition: opacity 250ms ease, transform 250ms ease;
+}
+.aisle-tag b { width: 0.8em; height: 0.8em; border-radius: 0.25em; }
+.aisle-tag small { font-weight: 600; color: var(--ink-2); opacity: 0.75; }
+.aisle-tag.is-dim { opacity: 0.38; }
+.aisle-tag.is-on { background: var(--read); color: #fff; border-color: var(--read-dark); transform: scale(1.08); }
+.aisle-tag.is-on small { color: #fff; }
+
+.part-tag {
+  font: 800 calc(15px * var(--stage-zoom, 1)) var(--font-code);
+  color: var(--ink);
+  background: var(--amber);
+  border: 2px solid var(--amber-dark);
+  border-radius: 0.5em;
+  padding: 0.35em 0.6em;
+  box-shadow: 0 0.2em 0 rgba(43, 40, 64, 0.2);
+}
+.part-tag.is-new { animation: stamp 420ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+@keyframes stamp { 0% { transform: scale(2.2) rotate(-8deg); opacity: 0; } 60% { opacity: 1; } 100% { transform: scale(1) rotate(0); } }
+
+.stage-tag {
+  font: 800 calc(14px * var(--stage-zoom, 1)) var(--font-display);
+  padding: 0.5em 0.85em;
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  box-shadow: 0 0.17em 0 rgba(43, 40, 64, 0.12);
+}
+.stage-tag--dock { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+[data-compact] .aisle-tag small { display: none; }
+
+@keyframes pop { 0% { transform: scale(0); } 100% { transform: scale(1); } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+}
+
+/* A wrong answer shakes */
+@keyframes shake { 0%, 100% { transform: translateX(0); } 20% { transform: translateX(-8px); } 40% { transform: translateX(8px); } 60% { transform: translateX(-5px); } 80% { transform: translateX(5px); } }
+.animate-shake { animation: shake 0.42s ease-in-out; }
+@media (prefers-reduced-motion: reduce) { .animate-shake { animation: none; } }
+
+/* Counter tick when a number changes */
+@keyframes bump { 0% { transform: scale(1.18); } 100% { transform: scale(1); } }
+.animate-bump { animation: bump 260ms cubic-bezier(0.34, 1.56, 0.64, 1); }
+
+/* ---------- Themed backdrop: a logistics park at sunset ---------- */
+.backdrop .cloud { animation: cloud-drift linear infinite; will-change: transform; }
+@keyframes cloud-drift { from { transform: translateX(-40vw); } to { transform: translateX(115vw); } }
+.backdrop .puff { transform-box: fill-box; transform-origin: center; filter: blur(3px); animation: puff 7.2s ease-out infinite; }
+@keyframes puff {
+  0% { transform: translate(0, 0) scale(0.4); opacity: 0; }
+  12% { opacity: 1; }
+  100% { transform: translate(34px, -110px) scale(3.4); opacity: 0; }
+}
+.backdrop .truck { left: 0; animation: truck-drive linear infinite; will-change: transform; }
+@keyframes truck-drive { from { transform: translateX(-12vw); } to { transform: translateX(112vw); } }
+.backdrop .truck.is-back { animation-name: truck-back; }
+@keyframes truck-back { from { transform: translateX(112vw) scaleX(-1); } to { transform: translateX(-12vw) scaleX(-1); } }
+.backdrop .crane-arm { transform-box: fill-box; transform-origin: 12% 50%; animation: crane 18s ease-in-out infinite alternate; }
+@keyframes crane { from { transform: rotate(-4deg); } to { transform: rotate(5deg); } }
+.backdrop .blink { animation: blink 4s steps(1) infinite; }
+@keyframes blink { 0%, 70% { opacity: 1; } 71%, 100% { opacity: 0.25; } }
+@media (prefers-reduced-motion: reduce) { .backdrop *, .backdrop .puff { animation: none !important; } }

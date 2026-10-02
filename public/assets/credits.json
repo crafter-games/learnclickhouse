@@ -1,0 +1,46 @@
+[
+  {
+    "ref": "kenney:car-kit",
+    "title": "car kit",
+    "type": "models",
+    "license": "CC0 1.0",
+    "author": "Kenney",
+    "url": "https://kenney.nl/assets/car-kit",
+    "paths": [
+      "public/assets/models/kenney-car-kit"
+    ]
+  },
+  {
+    "ref": "kenney:city-kit-industrial",
+    "title": "city kit industrial",
+    "type": "models",
+    "license": "CC0 1.0",
+    "author": "Kenney",
+    "url": "https://kenney.nl/assets/city-kit-industrial",
+    "paths": [
+      "public/assets/models/kenney-city-kit-industrial"
+    ]
+  },
+  {
+    "ref": "kenney:factory-kit",
+    "title": "factory kit",
+    "type": "models",
+    "license": "CC0 1.0",
+    "author": "Kenney",
+    "url": "https://kenney.nl/assets/factory-kit",
+    "paths": [
+      "public/assets/models/kenney-factory-kit"
+    ]
+  },
+  {
+    "ref": "kenney:mini-market",
+    "title": "mini market",
+    "type": "models",
+    "license": "CC0 1.0",
+    "author": "Kenney",
+    "url": "https://kenney.nl/assets/mini-market",
+    "paths": [
+      "public/assets/models/kenney-mini-market"
+    ]
+  }
+]

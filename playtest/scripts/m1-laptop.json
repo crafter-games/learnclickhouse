@@ -1,0 +1,24 @@
+{
+  "name": "m1-laptop",
+  "viewport": [1280, 720],
+  "steps": [
+    { "wait": 4000 },
+    { "expect": "window.__TEST__.ready === true" },
+    { "screenshot": "empty" },
+    { "press": "i" },
+    { "wait": 1400 },
+    { "screenshot": "delivering" },
+    { "wait": 3500 },
+    { "press": "i" },
+    { "wait": 5000 },
+    { "expect": "window.__TEST__.parts === 2" },
+    { "screenshot": "two-parts" },
+    { "press": "r" },
+    { "wait": 2600 },
+    { "screenshot": "reading" },
+    { "wait": 7000 },
+    { "expect": "window.__TEST__.busy === false" },
+    { "eval": "window.__TEST__.result" },
+    { "screenshot": "result" }
+  ]
+}

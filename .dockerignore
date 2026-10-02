@@ -1,0 +1,7 @@
+node_modules
+.next
+.git
+playtest/screenshots
+docs
+*.md
+!README.md
