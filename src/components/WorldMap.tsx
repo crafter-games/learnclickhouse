@@ -140,14 +140,14 @@ export function WorldMap() {
       <Backdrop />
       <AudioDirector intensity={1} />
       {/* The map opens from a closed iris (pairs with the landing's wipe) */}
-      <div aria-hidden className="iris-open pointer-events-none fixed inset-0 z-50 bg-ink" />
+      <div aria-hidden className="iris-open pointer-events-none fixed inset-0 z-50 bg-black" />
       <div ref={host} className="absolute inset-0" data-testid="world-map" />
 
       <header ref={headerRef} className="pointer-events-none absolute inset-x-0 top-0 z-20 flex items-center justify-between gap-2 px-3 pt-3 sm:px-5">
         <Link href="/" aria-label={t("home")} className="pointer-events-auto">
           <Logo />
         </Link>
-        <div className="pointer-events-auto flex items-center gap-2">
+        <div className="pointer-events-auto flex min-w-0 flex-wrap items-center justify-end gap-1.5 sm:gap-2">
           <Link href="/review" className={`${gameButtonClass({ size: "sm" })} relative`} aria-label={t("shift.title")}>
             <Coffee size={18} weight="fill" className="text-amber-dark" />
             <span className="hidden sm:inline">{t("shift.title")}</span>
@@ -224,7 +224,7 @@ export function WorldMap() {
                     <span className="flex flex-col items-center gap-1.5 text-center">
                       <span
                         className={`relative grid size-10 place-items-center rounded-full font-display text-sm font-extrabold transition ${
-                          stars ? "bg-read text-white" : isNext ? "bg-amber text-ink ring-4 ring-amber/30" : open ? "bg-indigo text-white" : "bg-paper-2 text-ink-2"
+                          stars ? "bg-read text-on-amber" : isNext ? "bg-amber text-on-amber ring-4 ring-amber/30" : open ? "bg-indigo text-on-amber" : "bg-paper-2 text-ink-2"
                         }`}
                       >
                         {stars ? <Check weight="bold" /> : open ? l.id : <LockSimple weight="bold" />}

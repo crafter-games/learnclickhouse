@@ -63,7 +63,7 @@ export function MorningShift() {
       ) : (
         <div className="flex flex-1 items-center justify-center px-4 py-8">
           <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="card w-full max-w-lg p-8 text-center">
-            <span className="mx-auto grid size-16 place-items-center rounded-2xl bg-amber text-ink shadow-[0_3px_0_var(--amber-dark)]">
+            <span className="mx-auto grid size-16 place-items-center rounded-2xl bg-amber text-on-amber shadow-[0_3px_0_var(--amber-dark)]">
               <Coffee size={34} weight="fill" />
             </span>
             {mounted && (

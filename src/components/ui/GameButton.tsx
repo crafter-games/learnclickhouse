@@ -5,18 +5,18 @@ type Size = "sm" | "md" | "lg" | "icon";
 
 // Tactile but quiet: solid fills, a 3px darker bottom edge that compresses on press.
 const base =
-  "relative inline-flex select-none items-center justify-center gap-2 rounded-xl font-display font-bold cursor-pointer " +
+  "relative inline-flex select-none items-center justify-center gap-2 rounded-[10px] font-display font-bold tracking-tight cursor-pointer " +
   "transition-[transform,box-shadow,background-color,border-color] duration-150 ease-out " +
   "active:translate-y-[2px] disabled:pointer-events-none disabled:opacity-45 " +
   "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo";
 
 const variants: Record<Variant, string> = {
   // Amber with ink text: white on amber fails contrast
-  primary: "bg-amber text-ink shadow-[0_3px_0_var(--amber-dark)] hover:bg-[#f8be3d] active:shadow-[0_1px_0_var(--amber-dark)]",
-  accent: "bg-indigo text-white shadow-[0_3px_0_var(--indigo-dark)] hover:bg-[#6569d1] active:shadow-[0_1px_0_var(--indigo-dark)]",
+  primary: "bg-amber text-on-amber shadow-[0_3px_0_var(--amber-dark),0_0_24px_-6px_rgba(250,255,105,0.55)] hover:bg-[#fdff8e] active:shadow-[0_1px_0_var(--amber-dark)]",
+  accent: "bg-indigo text-on-amber shadow-[0_3px_0_var(--indigo-dark)] hover:bg-[#a2a4ff] active:shadow-[0_1px_0_var(--indigo-dark)]",
   secondary:
-    "border border-line bg-paper text-ink shadow-[0_3px_0_rgba(43,40,64,0.14)] hover:bg-white active:shadow-[0_1px_0_rgba(43,40,64,0.14)]",
-  ghost: "text-ink-2 hover:text-ink hover:bg-ink/5",
+    "border border-white/10 bg-paper-2 text-ink shadow-[0_3px_0_rgba(0,0,0,0.45)] hover:border-amber/50 hover:bg-[#2b2d36] active:shadow-[0_1px_0_rgba(0,0,0,0.45)]",
+  ghost: "text-ink-2 hover:text-ink hover:bg-white/5",
 };
 
 const sizes: Record<Size, string> = {

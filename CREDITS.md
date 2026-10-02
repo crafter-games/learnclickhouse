@@ -10,3 +10,5 @@ Every asset below is CC0 — attribution is not required, but it is kept here as
 | city kit industrial | Kenney | CC0 1.0 | [source](https://kenney.nl/assets/city-kit-industrial) | `public/assets/models/kenney-city-kit-industrial` |
 | factory kit | Kenney | CC0 1.0 | [source](https://kenney.nl/assets/factory-kit) | `public/assets/models/kenney-factory-kit` |
 | mini market | Kenney | CC0 1.0 | [source](https://kenney.nl/assets/mini-market) | `public/assets/models/kenney-mini-market` |
+| JRPG Music Pack #2 [Towns] — Sunshine Coast, Home Town | Juhani Junkala (SubspaceAudio) | CC0 1.0 | [source](https://opengameart.org/content/jrpg-pack-2-towns) | `public/audio/music/sunshine-coast.ogg`<br>`public/audio/music/home-town.ogg` |
+| JRPG Music Pack #5 [Action] — Preparing For Battle | Juhani Junkala (SubspaceAudio) | CC0 1.0 | [source](https://opengameart.org/content/jrpg-pack-5-action) | `public/audio/music/preparing-for-battle.ogg` |

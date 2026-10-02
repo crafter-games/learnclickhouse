@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
-import { Bricolage_Grotesque, Figtree, JetBrains_Mono } from "next/font/google";
+import { IBM_Plex_Mono, Manrope, Space_Grotesk } from "next/font/google";
 import { NextIntlClientProvider, hasLocale } from "next-intl";
 import { getTranslations, setRequestLocale } from "next-intl/server";
 import { routing } from "@/i18n/routing";
 import "../globals.css";
 
-const display = Bricolage_Grotesque({ subsets: ["latin"], variable: "--font-display" });
-const ui = Figtree({ subsets: ["latin"], variable: "--font-ui" });
-const code = JetBrains_Mono({ subsets: ["latin"], variable: "--font-code" });
+const display = Space_Grotesk({ subsets: ["latin"], variable: "--font-display" });
+const ui = Manrope({ subsets: ["latin"], variable: "--font-ui" });
+const code = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500", "600", "700"], variable: "--font-code" });
 
 export function generateStaticParams() {
   return routing.locales.map((locale) => ({ locale }));

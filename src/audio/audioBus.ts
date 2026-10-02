@@ -1,4 +1,4 @@
-import { Howl, Howler } from "howler";
+import { Howl } from "howler";
 
 // Every SFX key maps to a ClickHouse event (GDD → Audio). Music lives in ./music.ts.
 export const SFX = {
@@ -24,12 +24,13 @@ const BUS_VOLUME = { sfx: 0.8, ui: 0.5 } as const;
 
 class AudioBus {
   private sounds = new Map<SfxKey, Howl>();
+  private muted = false;
   private lastPlayed = new Map<SfxKey, number>();
 
   private get(key: SfxKey): Howl {
     let h = this.sounds.get(key);
     if (!h) {
-      h = new Howl({ src: [SFX[key]], preload: true });
+      h = new Howl({ src: [SFX[key]], preload: true, mute: this.muted });
       this.sounds.set(key, h);
     }
     return h;
@@ -53,8 +54,10 @@ class AudioBus {
     h.rate(opts.rate ?? 0.94 + Math.random() * 0.12, id);
   }
 
+  /** Mutes sound effects only (music has its own toggle). */
   setMuted(muted: boolean) {
-    Howler.mute(muted);
+    this.muted = muted;
+    for (const h of this.sounds.values()) h.mute(muted);
   }
 }
 

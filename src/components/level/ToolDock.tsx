@@ -55,7 +55,7 @@ export function ToolDock({ tools, columns, on }: { tools: Tool[]; columns: Colum
   return (
     <div className="card mx-auto flex w-fit max-w-full flex-col items-center gap-2.5 p-2.5 sm:p-3" data-dock>
       {queryTool && (
-        <p className="max-w-full rounded-lg bg-ink px-3 py-1.5 font-mono text-sm text-paper sm:text-base">
+        <p className="max-w-full rounded-lg border border-white/10 bg-black/55 text-ink px-3 py-1.5 font-mono text-sm sm:text-base">
           {queryTool.select && <span className="block truncate text-amber">{`-- ${t("goal")}: SELECT ${queryTool.select}`}</span>}
           <span className="block truncate">{sql}</span>
         </p>
@@ -103,7 +103,7 @@ export function ToolDock({ tools, columns, on }: { tools: Tool[]; columns: Colum
                       data-setting={`${tool.field}=${o}`}
                       disabled={on.busy && tool.field !== "async"}
                       onClick={() => on.setting(tool.field, o)}
-                      className={`h-12 rounded-xl border-2 px-3.5 font-display text-base font-bold transition-colors disabled:opacity-60 ${picked ? "border-indigo-dark !bg-indigo text-white" : "border-line bg-paper text-ink-2 hover:bg-white"}`}
+                      className={`h-12 rounded-xl border-2 px-3.5 font-display text-base font-bold transition-colors disabled:opacity-60 ${picked ? "border-indigo-dark !bg-indigo text-on-amber" : "border-line bg-paper text-ink-2 hover:border-amber/40 hover:bg-paper-2"}`}
                     >
                       {tl(`${tool.labels}.${String(o)}`)}
                     </button>
@@ -128,7 +128,7 @@ export function ToolDock({ tools, columns, on }: { tools: Tool[]; columns: Colum
                       aria-checked={on_}
                       disabled={on.busy}
                       onClick={() => on.orderBy(c)}
-                      className={`flex h-12 items-center gap-1.5 rounded-xl border-2 px-3 font-mono text-base font-bold transition-colors disabled:opacity-60 ${on_ ? "border-indigo-dark !bg-indigo text-white" : "border-line bg-paper text-ink-2 hover:bg-white"}`}
+                      className={`flex h-12 items-center gap-1.5 rounded-xl border-2 px-3 font-mono text-base font-bold transition-colors disabled:opacity-60 ${on_ ? "border-indigo-dark !bg-indigo text-on-amber" : "border-line bg-paper text-ink-2 hover:border-amber/40 hover:bg-paper-2"}`}
                     >
                       <span className="size-3 rounded-[3px]" style={{ background: COLUMN_COLORS[ci] }} />
                       {c}
@@ -151,7 +151,7 @@ export function ToolDock({ tools, columns, on }: { tools: Tool[]; columns: Colum
                       data-column={c}
                       title={`${c} (${k + 1})`}
                       onClick={() => toggle(c)}
-                      className={`flex h-12 items-center gap-1.5 rounded-xl border-2 px-3 font-mono text-base font-bold transition-colors max-sm:h-11 max-sm:px-2 max-sm:text-sm ${picked ? "border-read-dark !bg-read text-white" : "border-line bg-paper text-ink-2 hover:bg-white"}`}
+                      className={`flex h-12 items-center gap-1.5 rounded-xl border-2 px-3 font-mono text-base font-bold transition-colors max-sm:h-11 max-sm:px-2 max-sm:text-sm ${picked ? "border-read-dark !bg-read text-on-amber" : "border-line bg-paper text-ink-2 hover:border-amber/40 hover:bg-paper-2"}`}
                     >
                       <span className="size-3 rounded-[3px]" style={{ background: COLUMN_COLORS[ci] }} />
                       {c}

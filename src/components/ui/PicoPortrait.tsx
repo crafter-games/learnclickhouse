@@ -4,8 +4,8 @@ export function PicoPortrait({ className = "", face = "happy" }: { className?: s
     <svg viewBox="0 0 96 96" className={className} aria-hidden>
       <line x1="48" y1="10" x2="48" y2="22" stroke="#3b3654" strokeWidth="3" strokeLinecap="round" />
       <circle cx="48" cy="9" r="5" fill="#ffd36b" />
-      <rect x="14" y="20" width="68" height="52" rx="16" fill="#f5b324" />
-      <rect x="14" y="62" width="68" height="10" rx="5" fill="#c98a0c" opacity="0.55" />
+      <rect x="14" y="20" width="68" height="52" rx="16" fill="#f3ea4a" />
+      <rect x="14" y="62" width="68" height="10" rx="5" fill="#b3ab25" opacity="0.55" />
       <rect x="22" y="28" width="52" height="34" rx="9" fill="#1d1b2e" />
       {face === "happy" ? (
         <>
@@ -20,9 +20,9 @@ export function PicoPortrait({ className = "", face = "happy" }: { className?: s
           <circle cx="48" cy="55" r="3.5" fill="#7ff0dc" />
         </>
       )}
-      <rect x="8" y="38" width="8" height="20" rx="4" fill="#c98a0c" />
-      <rect x="80" y="38" width="8" height="20" rx="4" fill="#c98a0c" />
-      <rect x="26" y="74" width="44" height="12" rx="6" fill="#f5b324" />
+      <rect x="8" y="38" width="8" height="20" rx="4" fill="#b3ab25" />
+      <rect x="80" y="38" width="8" height="20" rx="4" fill="#b3ab25" />
+      <rect x="26" y="74" width="44" height="12" rx="6" fill="#f3ea4a" />
       <circle cx="34" cy="88" r="6" fill="#3b3654" />
       <circle cx="62" cy="88" r="6" fill="#3b3654" />
     </svg>

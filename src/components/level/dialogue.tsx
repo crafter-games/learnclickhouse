@@ -178,8 +178,8 @@ export function DialogueBox({
       {/* Speaker portrait + name plate, visual-novel style */}
       <div className="pointer-events-none absolute -top-9 left-4 z-10 flex items-end gap-2 sm:left-6">
         <PicoPortrait className="size-16 drop-shadow-md sm:size-[88px]" />
-        <span className="mb-2 rounded-lg bg-ink px-2.5 py-1 font-display text-sm font-bold text-paper shadow-[0_2px_0_rgba(0,0,0,0.25)]">{speaker}</span>
-        <span className="mb-2 rounded-lg bg-amber px-2 py-1 font-display text-[11px] font-bold uppercase tracking-[0.14em] text-ink">{kicker}</span>
+        <span className="mb-2 rounded-lg border border-white/15 bg-paper-2 px-2.5 py-1 font-display text-sm font-bold text-ink shadow-[0_2px_0_rgba(0,0,0,0.4)]">{speaker}</span>
+        <span className="mb-2 rounded-lg bg-amber px-2 py-1 font-mono text-[11px] font-bold uppercase tracking-[0.14em] text-on-amber">{kicker}</span>
       </div>
 
       <div
@@ -194,7 +194,7 @@ export function DialogueBox({
       >
         {heading &&
           (tone ? (
-            <p className={`mb-2 inline-flex items-center gap-2 rounded-xl px-3 py-1.5 font-display text-base font-extrabold text-white sm:text-lg ${tone === "bad" ? "bg-danger" : "bg-read"}`}>
+            <p className={`mb-2 inline-flex items-center gap-2 rounded-xl px-3 py-1.5 font-display text-base font-extrabold sm:text-lg ${tone === "bad" ? "bg-danger text-white" : "bg-read text-on-amber"}`}>
               {tone === "bad" ? <X weight="bold" /> : <Check weight="bold" />}
               {heading}
             </p>

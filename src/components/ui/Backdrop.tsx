@@ -1,6 +1,6 @@
-// Themed backdrop for every screen (GDD → Art direction): a logistics park at sunset — a warm sky
-// with a hazy sun and drifting clouds, a far row of warehouses with gantry cranes, a near row with
-// roll-up doors and lit windows, chimneys puffing, and delivery trucks driving along the road.
+// Themed backdrop for every screen (GDD → Art direction): the logistics park at night — a deep sky
+// with stars and a pale moon, a far row of warehouses with gantry cranes, a near row with roll-up
+// doors and yellow-lit windows, chimneys puffing, and delivery trucks with headlights on the road.
 // Pure SVG + CSS; the 3D canvas is transparent and floats on top of it.
 import { seeded } from "@/lib/rng";
 
@@ -58,18 +58,28 @@ const CRANES = [
   { x: 260, h: 300 },
   { x: 1180, h: 340 },
 ];
+const STARS = (() => {
+  const rng = seeded(5);
+  return Array.from({ length: 70 }, () => ({ x: rng() * 100, y: rng() * 55, r: 0.6 + rng() * 1.1, o: 0.25 + rng() * 0.6 }));
+})();
 const TRUCKS = [
   { dur: 38, delay: 0, back: false, color: "#3f9f62" },
   { dur: 46, delay: -21, back: true, color: "#e07a5f" },
-  { dur: 41, delay: -9, back: false, color: "#f5b324" },
+  { dur: 41, delay: -9, back: false, color: "#faff69" },
 ];
 
 export function Backdrop() {
   return (
     <div aria-hidden className="backdrop pointer-events-none absolute inset-0 -z-10 overflow-hidden">
-      {/* Sky */}
-      <div className="absolute inset-0 bg-[linear-gradient(180deg,#f7d6bd_0%,#efd7e6_36%,#dbd2ef_68%,#cdc5e7_100%)]" />
-      <div className="absolute -right-[8vmax] -top-[12vmax] size-[44vmax] rounded-full bg-[radial-gradient(circle,rgba(255,222,160,0.95)_0%,rgba(255,190,130,0.45)_35%,transparent_70%)]" />
+      {/* Night sky, a moon and a warm glow from the depot on the horizon */}
+      <div className="absolute inset-0 bg-[linear-gradient(180deg,#07080b_0%,#0d0f15_45%,#161821_75%,#1b1d27_100%)]" />
+      <div className="absolute inset-x-0 bottom-[10%] h-[45%] bg-[radial-gradient(ellipse_70%_60%_at_50%_100%,rgba(250,255,105,0.10)_0%,transparent_70%)]" />
+      <svg className="absolute inset-0 h-full w-full" aria-hidden>
+        {STARS.map((st, i) => (
+          <circle key={i} cx={`${st.x}%`} cy={`${st.y}%`} r={st.r} fill="#e9e8ff" opacity={st.o} className={i % 4 === 0 ? "blink" : undefined} style={{ animationDelay: `${-i * 0.7}s` }} />
+        ))}
+      </svg>
+      <div className="absolute right-[12%] top-[9%] size-[7vmax] rounded-full bg-[radial-gradient(circle_at_35%_35%,#fbfaf0_0%,#e6e4d4_55%,#cfccb8_100%)] shadow-[0_0_80px_20px_rgba(240,240,210,0.12)]" />
       {/* Clouds */}
       {[
         { top: "8%", scale: 1, delay: "0s", dur: "150s" },
@@ -78,7 +88,7 @@ export function Backdrop() {
       ].map((c, i) => (
         <div key={i} className="cloud absolute left-0" style={{ top: c.top, animationDuration: c.dur, animationDelay: c.delay }}>
           <svg width={320 * c.scale} height={110 * c.scale} viewBox="0 0 320 110" className="blur-[1px]">
-            <g fill="rgba(255,255,255,0.75)">
+            <g fill="rgba(160,165,200,0.10)">
               <ellipse cx="90" cy="70" rx="80" ry="34" />
               <ellipse cx="170" cy="52" rx="70" ry="44" />
               <ellipse cx="240" cy="72" rx="70" ry="30" />
@@ -89,7 +99,7 @@ export function Backdrop() {
 
       {/* Far warehouses and gantry cranes: pale and blurred */}
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMax slice" className="absolute inset-x-0 bottom-[13%] h-[62%] w-full blur-[1.5px]">
-        <g fill="#c8bfe3">
+        <g fill="#1d1f29">
           {FAR.map((s, i) => (
             <path key={i} d={s.d} />
           ))}
@@ -99,7 +109,7 @@ export function Backdrop() {
               <rect x={c.x - 40} y={H - c.h - 14} width={100} height={16} />
               <g className="crane-arm" style={{ animationDelay: `${-i * 7}s` }}>
                 <rect x={c.x - 60} y={H - c.h - 30} width={260} height={12} />
-                <line x1={c.x + 150} y1={H - c.h - 18} x2={c.x + 150} y2={H - c.h + 70} stroke="#c8bfe3" strokeWidth={3} />
+                <line x1={c.x + 150} y1={H - c.h - 18} x2={c.x + 150} y2={H - c.h + 70} stroke="#1d1f29" strokeWidth={3} />
                 <rect x={c.x + 132} y={H - c.h + 70} width={36} height={22} rx={2} />
               </g>
             </g>
@@ -108,7 +118,7 @@ export function Backdrop() {
         {FAR.filter((s) => s.chimney).map((s, i) => (
           <g key={i}>
             {[0, 1, 2].map((k) => (
-              <circle key={k} cx={s.chimney!.x} cy={s.chimney!.y} r={8} fill="rgba(255,255,255,0.5)" className="puff" style={{ animationDelay: `${-(i * 1.3 + k * 2.4)}s` }} />
+              <circle key={k} cx={s.chimney!.x} cy={s.chimney!.y} r={8} fill="rgba(180,185,210,0.18)" className="puff" style={{ animationDelay: `${-(i * 1.3 + k * 2.4)}s` }} />
             ))}
           </g>
         ))}
@@ -116,40 +126,41 @@ export function Backdrop() {
 
       {/* Near warehouses: darker, sharper, with roll-up doors and lit windows */}
       <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMax slice" className="absolute inset-x-0 bottom-[7%] h-[44%] w-full blur-[0.5px]">
-        <g fill="#b3aad7">
+        <g fill="#262833">
           {NEAR.map((s, i) => (
             <path key={i} d={s.d} />
           ))}
         </g>
-        {NEAR.flatMap((s, i) => s.doors.map((d, k) => <rect key={`d${i}-${k}`} x={d.x} y={d.y} width={d.w} height={46} rx={2} fill="#a39ac9" />))}
+        {NEAR.flatMap((s, i) => s.doors.map((d, k) => <rect key={`d${i}-${k}`} x={d.x} y={d.y} width={d.w} height={46} rx={2} fill="#1e2029" />))}
         {NEAR.flatMap((s, i) =>
-          s.windows.map((w, k) => <rect key={`${i}-${k}`} x={w.x} y={w.y} width={14} height={8} rx={2} fill={w.lit ? "#ffd68a" : "#c3bbe1"} className={w.lit && k % 3 === 0 ? "blink" : undefined} style={w.lit ? { animationDelay: `${-(i + k) * 0.9}s` } : undefined} />),
+          s.windows.map((w, k) => <rect key={`${i}-${k}`} x={w.x} y={w.y} width={14} height={8} rx={2} fill={w.lit ? "#f6f86a" : "#30323e"} className={w.lit && k % 3 === 0 ? "blink" : undefined} style={w.lit ? { animationDelay: `${-(i + k) * 0.9}s` } : undefined} />),
         )}
         {NEAR.filter((s) => s.chimney).map((s, i) => (
           <g key={i}>
             {[0, 1, 2].map((k) => (
-              <circle key={k} cx={s.chimney!.x} cy={s.chimney!.y} r={9} fill="rgba(255,255,255,0.6)" className="puff" style={{ animationDelay: `${-(i * 1.1 + k * 2.4)}s` }} />
+              <circle key={k} cx={s.chimney!.x} cy={s.chimney!.y} r={9} fill="rgba(180,185,210,0.22)" className="puff" style={{ animationDelay: `${-(i * 1.1 + k * 2.4)}s` }} />
             ))}
           </g>
         ))}
       </svg>
 
       {/* Road with trucks */}
-      <div className="absolute inset-x-0 bottom-[5%] h-[3%] bg-[#a69dcb]/70" />
-      <div className="absolute inset-x-0 bottom-[6.4%] h-px bg-[repeating-linear-gradient(90deg,rgba(255,255,255,0.7)_0_18px,transparent_18px_40px)]" />
+      <div className="absolute inset-x-0 bottom-[5%] h-[3%] bg-[#22242d]" />
+      <div className="absolute inset-x-0 bottom-[6.4%] h-px bg-[repeating-linear-gradient(90deg,rgba(250,255,105,0.55)_0_18px,transparent_18px_40px)]" />
       {TRUCKS.map((t, i) => (
         <div key={i} className={`truck absolute ${t.back ? "is-back bottom-[6.6%]" : "bottom-[5.6%]"}`} style={{ animationDuration: `${t.dur}s`, animationDelay: `${t.delay}s` }}>
           <svg width="58" height="26" viewBox="0 0 58 26">
-            <rect x="0" y="2" width="38" height="17" rx="2" fill={t.color} opacity="0.85" />
-            <path d="M38,7 L49,7 L56,13 L56,19 L38,19 Z" fill="#8f86ba" />
-            <rect x="44" y="9" width="7" height="5" rx="1" fill="#e9e4f7" />
-            <circle cx="10" cy="21" r="4" fill="#5d5585" />
-            <circle cx="46" cy="21" r="4" fill="#5d5585" />
+            <rect x="0" y="2" width="38" height="17" rx="2" fill={t.color} opacity="0.55" />
+            <path d="M38,7 L49,7 L56,13 L56,19 L38,19 Z" fill="#3a3d4b" />
+            <rect x="44" y="9" width="7" height="5" rx="1" fill="#8d90a6" />
+            <circle cx="56" cy="16" r="2" fill="#fbff9a" />
+            <circle cx="10" cy="21" r="4" fill="#0f1015" />
+            <circle cx="46" cy="21" r="4" fill="#0f1015" />
           </svg>
         </div>
       ))}
       {/* Ground haze so the 3D floor sits on something soft */}
-      <div className="absolute inset-x-0 bottom-0 h-[26%] bg-[linear-gradient(180deg,transparent,rgba(214,207,236,0.9))]" />
+      <div className="absolute inset-x-0 bottom-0 h-[26%] bg-[linear-gradient(180deg,transparent,rgba(14,15,19,0.95))]" />
     </div>
   );
 }

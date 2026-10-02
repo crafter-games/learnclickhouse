@@ -1,24 +1,26 @@
 @import "tailwindcss";
 
-/* Column Depot — cozy warehouse theme (GDD → Art direction). Palette sampled from the Kenney
-   Factory Kit (lavender floor, indigo structures) plus the Column Depot amber accent.
-   Roles: amber = depot / Pico / primary action, indigo = secondary action, teal = read, red = danger. */
+/* Column Depot — "night depot / SQL console" theme (GDD → Art direction).
+   Dark surfaces like a query console, with the ClickHouse-style yellow as the one accent.
+   Roles: yellow (amber tokens) = primary action / Pico / highlights, violet (indigo tokens) =
+   secondary, mint (read) = read data, red = danger. Text on yellow is always near-black. */
 :root {
-  --ground: #d9d5ea;
-  --ground-2: #cfcae2;
-  --paper: #fbf8f3;
-  --paper-2: #f2eee6;
-  --ink: #2b2840;
-  --ink-2: #46435f;
-  --line: rgba(43, 40, 64, 0.12);
-  --amber: #f5b324;
-  --amber-dark: #b9800a;
-  --indigo: #5b5fc7;
-  --indigo-dark: #3d409b;
-  --read: #2fb5a3;
-  --read-dark: #1f8a7c;
-  --danger: #e5484d;
-  color-scheme: light;
+  --ground: #0e0f13;
+  --ground-2: #15161b;
+  --paper: #18191f;
+  --paper-2: #23252d;
+  --ink: #f3f2ec;
+  --ink-2: #a9a9b4;
+  --line: rgba(255, 255, 255, 0.09);
+  --amber: #faff69;
+  --amber-dark: #b8bd2c;
+  --on-amber: #121214;
+  --indigo: #8a8cff;
+  --indigo-dark: #5457d6;
+  --read: #3ddbb8;
+  --read-dark: #1f9c82;
+  --danger: #ff5a5f;
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -31,6 +33,7 @@
   --color-line: var(--line);
   --color-amber: var(--amber);
   --color-amber-dark: var(--amber-dark);
+  --color-on-amber: var(--on-amber);
   --color-indigo: var(--indigo);
   --color-indigo-dark: var(--indigo-dark);
   --color-read: var(--read);
@@ -42,7 +45,7 @@
 }
 
 body {
-  background: #dad4ee;
+  background: var(--ground);
   color: var(--ink);
   font-family: var(--font-ui), system-ui, sans-serif;
   -webkit-tap-highlight-color: transparent;
@@ -50,13 +53,20 @@ body {
 
 button, a { touch-action: manipulation; }
 
-/* Paper card floating over the warehouse floor */
+/* A console window floating over the depot: dark glass, hairline border, a yellow top edge */
 .card {
-  background: var(--paper);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0) 40%), color-mix(in oklab, var(--paper) 94%, transparent);
   border: 1px solid var(--line);
-  border-radius: 20px;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.8) inset, 0 2px 0 rgba(43, 40, 64, 0.06), 0 16px 32px -18px rgba(43, 40, 64, 0.35);
+  border-radius: 14px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 18px 40px -16px rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(10px);
 }
+.card--accent { box-shadow: 0 -3px 0 var(--amber) inset, 0 1px 0 rgba(255, 255, 255, 0.06) inset, 0 18px 40px -16px rgba(0, 0, 0, 0.7); }
+
+/* The column-bars motif (a tiny bar chart) used in kickers and the logo */
+.bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 0.9em; }
+.bars i { width: 3px; border-radius: 1px; background: var(--amber); }
+.bars i:nth-child(1) { height: 45%; } .bars i:nth-child(2) { height: 100%; } .bars i:nth-child(3) { height: 70%; } .bars i:nth-child(4) { height: 85%; }
 
 /* ---------- 3D stage labels (CSS2DRenderer) ----------
    em-based off --stage-zoom so tags follow the camera fit. Never CSS zoom (breaks positioning). */
@@ -71,7 +81,7 @@ button, a { touch-action: manipulation; }
   border: 1px solid var(--line);
   border-radius: 0.7em;
   padding: 0.45em 0.7em 0.45em 0.45em;
-  box-shadow: 0 0.2em 0 rgba(43, 40, 64, 0.14);
+  box-shadow: 0 0.25em 0.6em rgba(0, 0, 0, 0.45);
   transition: opacity 250ms ease, transform 250ms ease;
 }
 .aisle-tag b { width: 0.8em; height: 0.8em; border-radius: 0.25em; }
@@ -80,17 +90,17 @@ button, a { touch-action: manipulation; }
 .aisle-tag .stripes { display: inline-flex; gap: 2px; }
 .aisle-tag .stripes i { width: 0.35em; height: 0.9em; border-radius: 0.15em; }
 .aisle-tag--rows { font-family: var(--font-display); }
-.aisle-tag.is-on { background: var(--read); color: #fff; border-color: var(--read-dark); transform: scale(1.08); }
-.aisle-tag.is-on small { color: #fff; }
+.aisle-tag.is-on { background: var(--read); color: var(--on-amber); border-color: var(--read-dark); transform: scale(1.08); }
+.aisle-tag.is-on small { color: var(--on-amber); }
 
 .part-tag {
   font: 800 calc(15px * var(--stage-zoom, 1)) var(--font-code);
-  color: var(--ink);
+  color: var(--on-amber);
   background: var(--amber);
   border: 2px solid var(--amber-dark);
-  border-radius: 0.5em;
+  border-radius: 0.4em;
   padding: 0.35em 0.6em;
-  box-shadow: 0 0.2em 0 rgba(43, 40, 64, 0.2);
+  box-shadow: 0 0.25em 0.6em rgba(0, 0, 0, 0.45);
 }
 .part-tag.is-new { animation: stamp 420ms cubic-bezier(0.34, 1.56, 0.64, 1); }
 @keyframes stamp { 0% { transform: scale(2.2) rotate(-8deg); opacity: 0; } 60% { opacity: 1; } 100% { transform: scale(1) rotate(0); } }
@@ -102,9 +112,9 @@ button, a { touch-action: manipulation; }
   background: var(--paper);
   color: var(--ink);
   border: 1px solid var(--line);
-  box-shadow: 0 0.17em 0 rgba(43, 40, 64, 0.12);
+  box-shadow: 0 0.25em 0.6em rgba(0, 0, 0, 0.45);
 }
-.stage-tag--dock { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.stage-tag--dock { background: var(--amber); color: var(--on-amber); border-color: var(--amber-dark); font-family: var(--font-code); }
 
 [data-compact] .aisle-tag small { display: none; }
 
@@ -153,7 +163,7 @@ button, a { touch-action: manipulation; }
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 0.4em 0.95em 0.4em 0.4em;
-  box-shadow: 0 3px 0 rgba(43, 40, 64, 0.15);
+  box-shadow: 0 0.3em 0.8em rgba(0, 0, 0, 0.5);
   white-space: nowrap;
   transition: transform 200ms ease, background-color 200ms ease;
 }
@@ -166,10 +176,10 @@ button, a { touch-action: manipulation; }
   background: var(--indigo);
   color: #fff;
 }
-.plot-tag.is-selected { background: var(--amber); border-color: var(--amber-dark); transform: scale(1.1); }
-.plot-tag.is-selected b { background: var(--ink); }
+.plot-tag.is-selected { background: var(--amber); color: var(--on-amber); border-color: var(--amber-dark); transform: scale(1.1); }
+.plot-tag.is-selected b { background: var(--on-amber); color: var(--amber); }
 .plot-tag.is-locked { color: var(--ink-2); }
-.plot-tag.is-locked b { background: #9a95b8; }
+.plot-tag.is-locked b { background: #4a4b55; }
 
 /* Scene transition: the map opens from a closed iris */
 @keyframes iris-open {
@@ -184,15 +194,16 @@ button, a { touch-action: manipulation; }
 .hall-tag {
   font: 800 calc(14px * var(--stage-zoom, 1)) var(--font-code);
   letter-spacing: 0.04em;
-  color: var(--paper);
-  background: var(--indigo);
-  border-radius: 0.5em;
+  color: var(--ink);
+  background: var(--paper-2);
+  border: 1px solid var(--indigo);
+  border-radius: 0.4em;
   padding: 0.45em 0.7em;
-  box-shadow: 0 0.2em 0 var(--indigo-dark);
+  box-shadow: 0 0.25em 0.6em rgba(0, 0, 0, 0.45);
 }
 .buffer-tag {
   font: 800 calc(14px * var(--stage-zoom, 1)) var(--font-code);
-  color: var(--ink);
+  color: var(--on-amber);
   background: var(--amber);
   border: 2px solid var(--amber-dark);
   border-radius: 0.6em;
@@ -207,4 +218,4 @@ button, a { touch-action: manipulation; }
   box-shadow: 0 0.2em 0 rgba(0, 0, 0, 0.2);
 }
 .truck-stamp--rejected { background: var(--danger); }
-.truck-stamp--duplicate { background: var(--amber-dark); }
+.truck-stamp--duplicate { background: var(--amber); color: var(--on-amber); }

@@ -108,7 +108,7 @@ export function Landing() {
         className="pointer-events-none absolute inset-0"
         style={{
           background:
-            "radial-gradient(ellipse 60% 40% at 50% 22%, color-mix(in oklab, #f6eefa 90%, transparent) 0%, color-mix(in oklab, #f6eefa 50%, transparent) 55%, transparent 100%), radial-gradient(ellipse 120% 90% at 50% 60%, transparent 60%, color-mix(in oklab, var(--ink) 16%, transparent) 100%)",
+            "radial-gradient(ellipse 60% 42% at 50% 22%, rgba(10, 11, 15, 0.92) 0%, rgba(10, 11, 15, 0.6) 55%, transparent 100%), radial-gradient(ellipse 120% 90% at 50% 60%, transparent 55%, rgba(0, 0, 0, 0.55) 100%)",
         }}
       />
 
@@ -119,7 +119,7 @@ export function Landing() {
           rel="noreferrer"
           aria-label={t("github")}
           title={t("github")}
-          className="grid size-11 place-items-center rounded-xl bg-ink text-paper shadow-[0_2px_0_rgba(0,0,0,0.25)] transition hover:-translate-y-0.5 hover:bg-indigo-dark"
+          className="grid size-11 place-items-center rounded-[10px] border border-white/10 bg-paper-2 text-ink shadow-[0_2px_0_rgba(0,0,0,0.4)] transition hover:-translate-y-0.5 hover:border-amber/60"
         >
           <GithubLogo size={22} weight="fill" aria-hidden />
         </a>
@@ -131,15 +131,21 @@ export function Landing() {
           initial={{ opacity: 0, y: -8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
-          className="rounded-full bg-ink px-3.5 py-1.5 font-display text-xs font-bold uppercase tracking-[0.16em] text-paper sm:text-sm"
+          className="flex items-center gap-2 rounded-full border border-amber/40 bg-black/50 px-3.5 py-1.5 font-mono text-xs font-semibold uppercase tracking-[0.16em] text-amber sm:text-sm"
         >
+          <span className="bars" aria-hidden>
+            <i />
+            <i />
+            <i />
+            <i />
+          </span>
           {t("kicker")}
         </motion.p>
         <motion.h1
           initial={{ opacity: 0, scale: 0.92 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ type: "spring", stiffness: 260, damping: 18, delay: 0.15 }}
-          className="mt-4 font-display text-[clamp(3rem,10vw,6.5rem)] font-extrabold leading-[0.9] tracking-tight text-ink [text-shadow:0_4px_0_var(--paper)]"
+          className="mt-4 font-display text-[clamp(3rem,10vw,6.5rem)] font-extrabold leading-[0.9] tracking-tight text-ink [text-shadow:0_4px_0_#000]"
         >
           Column <span className="text-amber [text-shadow:0_4px_0_var(--amber-dark)]">Depot</span>
         </motion.h1>
@@ -158,7 +164,7 @@ export function Landing() {
         >
           <Play weight="fill" />
           {t("start")}
-          <Keycap className="ml-1 border-ink/20 bg-ink/10 text-ink shadow-none max-sm:hidden">Enter</Keycap>
+          <Keycap className="ml-1 !border-black/40 !bg-transparent !text-on-amber shadow-none max-sm:hidden">Enter</Keycap>
         </motion.button>
       </section>
 
@@ -167,13 +173,13 @@ export function Landing() {
           href="https://github.com/Jibaru"
           target="_blank"
           rel="noreferrer"
-          className="group inline-flex items-center gap-2 rounded-full bg-paper/85 py-1 pl-1 pr-3.5 font-display text-sm font-bold text-ink shadow-[0_2px_0_rgba(43,40,64,0.12)] backdrop-blur transition hover:bg-paper"
+          className="group inline-flex items-center gap-2 rounded-full border border-white/10 bg-paper/85 py-1 pl-1 pr-3.5 font-display text-sm font-bold text-ink backdrop-blur transition hover:border-amber/50"
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="https://github.com/Jibaru.png?size=64" alt="" width={28} height={28} className="size-7 rounded-full" />
-          {t("madeBy")} <span className="text-amber-dark group-hover:underline">Jibaru</span>
+          {t("madeBy")} <span className="text-amber group-hover:underline">Jibaru</span>
         </a>
-        <p className="rounded-full bg-paper/75 px-3 py-1 text-center text-xs text-ink-2 backdrop-blur sm:text-right">
+        <p className="rounded-full border border-white/10 bg-paper/75 px-3 py-1 text-center text-xs text-ink-2 backdrop-blur sm:text-right">
           {t("credits")}{" "}
           <a href={`${REPO}/blob/main/CREDITS.md`} target="_blank" rel="noreferrer" className="font-semibold underline underline-offset-2 hover:text-ink">
             CREDITS.md
@@ -185,7 +191,7 @@ export function Landing() {
       {iris && (
         <motion.div
           aria-hidden
-          className="fixed inset-0 z-50 bg-ink"
+          className="fixed inset-0 z-50 bg-black"
           initial={{ clipPath: `circle(0px at ${iris.x}px ${iris.y}px)` }}
           animate={{ clipPath: `circle(150vmax at ${iris.x}px ${iris.y}px)` }}
           transition={{ duration: IRIS_MS / 1000, ease: [0.7, 0, 0.84, 0] }}

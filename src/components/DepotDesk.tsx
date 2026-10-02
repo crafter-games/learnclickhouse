@@ -212,14 +212,14 @@ export function DepotDesk() {
               </motion.p>
             )}
           </AnimatePresence>
-          <pre className="mt-3 overflow-x-auto rounded-xl bg-ink px-3 py-2 font-mono text-sm leading-relaxed text-paper lg:text-base max-lg:hidden">{sql}</pre>
+          <pre className="mt-3 overflow-x-auto rounded-xl border border-white/10 bg-black/55 text-ink px-3 py-2 font-mono text-sm leading-relaxed lg:text-base max-lg:hidden">{sql}</pre>
           {parts.length > 0 && (
             <div className="mt-3 max-lg:hidden">
               <div className="font-mono text-xs font-bold uppercase text-ink-2">system.parts</div>
               <ul className="mt-1 space-y-1">
                 {parts.map((p) => (
                   <li key={p.name} className="flex justify-between font-mono text-sm">
-                    <span className="rounded bg-amber/80 px-1.5 font-bold">{p.name}</span>
+                    <span className="rounded bg-amber px-1.5 font-bold text-on-amber">{p.name}</span>
                     <span className="text-ink-2">{t("panel.rows", { rows: fmt(p.rows) })}</span>
                   </li>
                 ))}
@@ -246,7 +246,7 @@ export function DepotDesk() {
                   onClick={() => toggle(c.name)}
                   aria-pressed={on}
                   title={`${c.name} (${i + 1})`}
-                  className={`flex h-14 items-center gap-1.5 rounded-xl border-2 px-3 font-mono text-base font-bold transition-colors max-sm:h-12 max-sm:px-2 max-sm:text-sm ${on ? "border-read-dark !bg-read text-white" : "border-line bg-paper text-ink-2 hover:bg-white"}`}
+                  className={`flex h-14 items-center gap-1.5 rounded-xl border-2 px-3 font-mono text-base font-bold transition-colors max-sm:h-12 max-sm:px-2 max-sm:text-sm ${on ? "border-read-dark !bg-read text-on-amber" : "border-line bg-paper text-ink-2 hover:border-amber/40 hover:bg-paper-2"}`}
                 >
                   <span className="size-3 rounded-[3px]" style={{ background: COLUMN_COLORS[i] }} />
                   {c.name}

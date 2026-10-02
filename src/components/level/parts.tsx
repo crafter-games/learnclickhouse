@@ -27,7 +27,7 @@ export function Text({ m, className }: { m: Msg; className?: string }) {
 
 export function CodeBlock({ code }: { code: string }) {
   return (
-    <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-xl bg-ink px-4 py-3 font-mono text-sm leading-relaxed text-paper sm:text-base">
+    <pre className="overflow-x-auto whitespace-pre-wrap break-words rounded-xl border border-white/10 bg-black/55 text-ink px-4 py-3 font-mono text-sm leading-relaxed sm:text-base">
       <code>{code}</code>
     </pre>
   );
@@ -88,8 +88,8 @@ export function AnswerInput({
 
   const state = (value: string | number) => {
     if (picked === undefined) return "";
-    if (String(value) === String(answer)) return "!border-read-dark !bg-read !text-white !shadow-[0_3px_0_var(--read-dark)] disabled:opacity-100 [&_span]:!text-white/85";
-    if (String(value) === String(picked)) return "!border-danger !bg-danger !text-white !shadow-[0_3px_0_#a8292d] disabled:opacity-100 animate-shake [&_span]:!text-white/85";
+    if (String(value) === String(answer)) return "!border-read-dark !bg-read !text-on-amber !shadow-[0_3px_0_var(--read-dark)] disabled:opacity-100 [&_span]:!text-on-amber/70";
+    if (String(value) === String(picked)) return "!border-danger !bg-danger !text-white !shadow-[0_3px_0_#a8292d] disabled:opacity-100 animate-shake [&_span]:!text-on-amber/70";
     return "opacity-50";
   };
   const mark = (value: string | number) =>
@@ -136,12 +136,12 @@ export function AnswerInput({
         disabled={disabled}
         value={num}
         onChange={(e) => setNum(e.target.value)}
-        className={`h-14 w-32 rounded-xl border-2 border-line bg-paper-2 px-3 text-center font-mono text-2xl font-bold text-ink outline-none focus:border-indigo focus:bg-white ${state(Number(num))}`}
+        className={`h-14 w-32 rounded-xl border-2 border-line bg-paper-2 px-3 text-center font-mono text-2xl font-bold text-ink outline-none focus:border-indigo focus:bg-black/40 ${state(Number(num))}`}
       />
       <button type="submit" disabled={disabled || num === ""} className={gameButtonClass({ variant: "accent", size: "lg" })}>
         {t("check")}
       </button>
-      {picked !== undefined && String(picked) !== String(answer) && <span className="rounded-lg bg-read px-3 py-1.5 font-mono text-xl font-bold text-white">= {answer}</span>}
+      {picked !== undefined && String(picked) !== String(answer) && <span className="rounded-lg bg-read px-3 py-1.5 font-mono text-xl font-bold text-on-amber">= {answer}</span>}
     </form>
   );
 }
@@ -157,7 +157,7 @@ export function Feedback({ correct, explain }: { correct: boolean; explain: Msg 
       className={`mt-4 overflow-hidden rounded-2xl border-2 text-base leading-snug sm:text-lg ${correct ? "border-read bg-read/10" : "border-danger bg-danger/10"}`}
       role="status"
     >
-      <p className={`flex items-center gap-2 px-4 py-2 font-display text-lg font-extrabold text-white ${correct ? "bg-read" : "bg-danger"}`}>
+      <p className={`flex items-center gap-2 px-4 py-2 font-display text-lg font-extrabold ${correct ? "bg-read text-on-amber" : "bg-danger text-white"}`}>
         {correct ? <Check weight="bold" /> : <X weight="bold" />}
         {correct ? t("right") : t("notQuite")}
       </p>
@@ -185,7 +185,7 @@ export function Verdict({ correct }: { correct: boolean }) {
         animate={{ scale: [0.3, 1.15, 1, 1], opacity: [0, 1, 1, 0], rotate: 0 }}
         transition={{ duration: 1.2, times: [0, 0.25, 0.4, 1] }}
       >
-        <span className={`grid size-28 place-items-center rounded-full text-white shadow-[0_6px_0_rgba(0,0,0,0.18)] ${correct ? "bg-read" : "bg-danger"}`}>
+        <span className={`grid size-28 place-items-center rounded-full shadow-[0_6px_0_rgba(0,0,0,0.3)] ${correct ? "bg-read text-on-amber" : "bg-danger text-white"}`}>
           {correct ? <Check size={64} weight="bold" /> : <X size={64} weight="bold" />}
         </span>
         <span className={`rounded-xl bg-paper px-4 py-1.5 font-display text-2xl font-extrabold shadow ${correct ? "text-read-dark" : "text-danger"}`}>{correct ? t("right") : t("notQuite")}</span>
@@ -266,7 +266,7 @@ export function PartsPanel({ table }: { table: Table }) {
       <ul className="space-y-1">
         {table.activeParts.map((p) => (
           <li key={p.name} className="flex justify-between font-mono text-sm">
-            <span className="rounded bg-amber/80 px-1.5 font-bold">{p.name}</span>
+            <span className="rounded bg-amber px-1.5 font-bold text-on-amber">{p.name}</span>
             <span className="text-ink-2">{t("rows", { rows: new Intl.NumberFormat(locale).format(p.rows) })}</span>
           </li>
         ))}
@@ -303,7 +303,7 @@ export function CompressionPanel({ table }: { table: Table }) {
               </span>
             </div>
             <div className="relative mt-0.5 h-2.5 overflow-hidden rounded-full bg-paper-2">
-              <div className="absolute inset-y-0 left-0 rounded-full bg-ink/10" style={{ width: `${(s.raw / max) * 100}%` }} />
+              <div className="absolute inset-y-0 left-0 rounded-full bg-white/10" style={{ width: `${(s.raw / max) * 100}%` }} />
               <motion.div className="absolute inset-y-0 left-0 rounded-full bg-indigo" animate={{ width: `${(s.compressed / max) * 100}%` }} transition={{ type: "spring", stiffness: 200, damping: 24 }} />
             </div>
           </li>
@@ -375,7 +375,7 @@ export function IndexPanel({ table, last, format }: { table: Table; last: Last; 
             {p.granules.map((g, i) => {
               const on = last && read.has(`${p.name}/${i}`);
               return (
-                <li key={i} className={`truncate rounded-md px-1.5 py-1 font-mono text-[11px] leading-tight ${on ? "bg-read text-white" : last ? "bg-paper-2 text-ink-2/60" : "bg-paper-2 text-ink"}`} title={`${t("mark")} ${i}`}>
+                <li key={i} className={`truncate rounded-md px-1.5 py-1 font-mono text-[11px] leading-tight ${on ? "bg-read text-on-amber" : last ? "bg-paper-2 text-ink-2/60" : "bg-paper-2 text-ink"}`} title={`${t("mark")} ${i}`}>
                   {key.map((c) => (g.keys?.[c] ? fmt(c, g.keys[c][0]) : g.min !== undefined && c === key[0] ? fmt(c, g.min) : "·")).join(" · ")}
                 </li>
               );
@@ -397,7 +397,7 @@ export function ExplainPanel({ last }: { last: Last }) {
         <Database weight="bold" /> EXPLAIN indexes = 1
       </p>
       {ex ? (
-        <pre className="overflow-x-auto rounded-xl bg-ink px-3 py-2 font-mono text-[13px] leading-relaxed text-paper">
+        <pre className="overflow-x-auto rounded-xl border border-white/10 bg-black/55 text-ink px-3 py-2 font-mono text-[13px] leading-relaxed">
           {ex.map((e) => `${e.stage}\n  Parts: ${e.parts[0]}/${e.parts[1]}\n  Granules: ${e.granules[0]}/${e.granules[1]}`).join("\n")}
         </pre>
       ) : (

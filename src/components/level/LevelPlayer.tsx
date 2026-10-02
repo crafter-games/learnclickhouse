@@ -341,7 +341,7 @@ export function LevelPlayer({ level, onRestart }: { level: Level; onRestart: () 
           {level.steps.map((_, i) => (
             <li key={i} className={`h-2 rounded-full transition-all ${phase !== "steps" || i < stepIndex ? "w-2 bg-read" : i === stepIndex ? "w-6 bg-indigo" : "w-2 bg-ink/20"}`} />
           ))}
-          <li className={`ml-1 grid size-5 place-items-center rounded-full ${phase === "steps" ? "bg-ink/10 text-ink-2" : "bg-amber text-ink"}`}>
+          <li className={`ml-1 grid size-5 place-items-center rounded-full ${phase === "steps" ? "bg-white/10 text-ink-2" : "bg-amber text-on-amber"}`}>
             <Brain size={12} weight="bold" />
           </li>
         </ol>

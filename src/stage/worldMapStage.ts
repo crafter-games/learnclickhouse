@@ -95,8 +95,8 @@ export class WorldMapStage {
     Object.assign(this.labels.domElement.style, { position: "absolute", inset: "0", pointerEvents: "none" });
     host.appendChild(this.labels.domElement);
 
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0xa79fcf, 1.8));
-    this.sun = new THREE.DirectionalLight(0xfff0dc, 2.3);
+    this.scene.add(new THREE.HemisphereLight(0xe4e8ff, 0x2a2b33, 2.1));
+    this.sun = new THREE.DirectionalLight(0xf2f4ff, 2.2);
     this.sun.castShadow = true;
     this.sun.shadow.mapSize.set(2048, 2048);
     this.sun.shadow.radius = 4;
@@ -120,14 +120,14 @@ export class WorldMapStage {
     const n = this.specs.length;
     const x0 = -10, x1 = (n - 1) * SPACING + 10;
     // Ground and road
-    const ground = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.3, 16), new THREE.MeshStandardMaterial({ color: 0xe1dcf0, roughness: 1 }));
+    const ground = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.3, 16), new THREE.MeshStandardMaterial({ color: 0x1f2128, roughness: 1 }));
     ground.position.set((x0 + x1) / 2, -0.16, 0.5);
     ground.receiveShadow = true;
-    const road = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.02, 2.2), new THREE.MeshStandardMaterial({ color: 0x8f88b4, roughness: 0.9 }));
+    const road = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.02, 2.2), new THREE.MeshStandardMaterial({ color: 0x2f313b, roughness: 0.9 }));
     road.position.set((x0 + x1) / 2, 0.005, ROAD_Z);
     road.receiveShadow = true;
     this.scene.add(ground, road);
-    const dashMat = new THREE.MeshStandardMaterial({ color: 0xf6f2ff });
+    const dashMat = new THREE.MeshStandardMaterial({ color: 0xfaff69, emissive: 0xfaff69, emissiveIntensity: 0.4 });
     for (let x = x0 + 0.5; x < x1; x += 1.4) {
       const dash = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.01, 0.08), dashMat);
       dash.position.set(x, 0.02, ROAD_Z);
@@ -143,7 +143,7 @@ export class WorldMapStage {
         const b = await model("city", backdrop[k % backdrop.length], true);
         b.position.set(x, 0, -6.2);
         b.scale.setScalar(1.25);
-        for (const m of materialsOf(b)) m.color.lerp(new THREE.Color(0xe4def3), 0.72);
+        for (const m of materialsOf(b)) m.color.lerp(new THREE.Color(0x2c2e3a), 0.6);
         this.scene.add(b);
       }),
     );
@@ -168,12 +168,12 @@ export class WorldMapStage {
     const group = new THREE.Group();
     group.position.copy(plotPos(i));
     group.userData.plot = i;
-    const pad = new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.12, 4.4), new THREE.MeshStandardMaterial({ color: spec.locked ? 0xd4d0e2 : 0xcfc8ea, roughness: 0.95 }));
+    const pad = new THREE.Mesh(new THREE.BoxGeometry(6.2, 0.12, 4.4), new THREE.MeshStandardMaterial({ color: spec.locked ? 0x23242b : 0x2c2e38, roughness: 0.95 }));
     pad.position.set(0, 0.05, -0.2);
     pad.receiveShadow = true;
     group.add(pad);
     // A soft ring under the selected plot
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(3.4, 0.07, 8, 64), new THREE.MeshStandardMaterial({ color: 0xf5b324, emissive: 0xf5b324, emissiveIntensity: 0.4 }));
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(3.4, 0.07, 8, 64), new THREE.MeshStandardMaterial({ color: 0xfaff69, emissive: 0xfaff69, emissiveIntensity: 0.6 }));
     ring.rotation.x = -Math.PI / 2;
     ring.position.set(0, 0.13, -0.2);
     ring.scale.set(1, 0.72, 1);
@@ -186,7 +186,7 @@ export class WorldMapStage {
         m.position.set(p.x, 0.11, p.z);
         m.rotation.y = p.ry ?? 0;
         m.scale.setScalar(p.s ?? 1);
-        if (spec.locked) for (const mat of materialsOf(m)) mat.color.lerp(new THREE.Color(0xc9c6da), 0.6);
+        if (spec.locked) for (const mat of materialsOf(m)) mat.color.lerp(new THREE.Color(0x3a3c47), 0.65);
         group.add(m);
       }),
     );
@@ -195,9 +195,9 @@ export class WorldMapStage {
     const flags = Math.round(spec.progress * 5);
     for (let f = 0; f < flags; f++) {
       const x = -2.6 + f * 0.5;
-      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.8), new THREE.MeshStandardMaterial({ color: 0x2b2840 }));
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.8), new THREE.MeshStandardMaterial({ color: 0xd6d6de }));
       pole.position.set(x, 0.5, 1.75);
-      const flag = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, 0.02), new THREE.MeshStandardMaterial({ color: 0xf5b324 }));
+      const flag = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.22, 0.02), new THREE.MeshStandardMaterial({ color: 0xfaff69 }));
       flag.position.set(x + 0.17, 0.78, 1.75);
       pole.castShadow = flag.castShadow = true;
       group.add(pole, flag);

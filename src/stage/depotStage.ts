@@ -21,10 +21,10 @@ const RACK_Y = 0.42; // top of the rollers
 const DRIVE_SPEED = 4.2; // Pico, units per second
 const FOV = 35;
 const READ = new THREE.Color(COLORS.read);
-const SKIPPED = new THREE.Color(0xcfcbdf);
-const MASKED = new THREE.Color(0xf0a8ab);
+const SKIPPED = new THREE.Color(0x4b4d58);
+const MASKED = new THREE.Color(0xc0525b);
 const WHITE = new THREE.Color(0xffffff);
-const HALL_TINTS = [0xd9d2f2, 0xd2e6ee, 0xeedfd2, 0xd8ecd9, 0xeed6e6];
+const HALL_TINTS = [0x2c2f45, 0x23383a, 0x3a3226, 0x26372b, 0x3a2735];
 /** General shot: from the front, a little to the right and above. */
 const GENERAL_DIR = new THREE.Vector3(0.24, 0.74, 1).normalize();
 
@@ -222,8 +222,9 @@ export class DepotStage {
   // ------------------------------------------------------------------ build
 
   private lights() {
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0xa79fcf, 1.8));
-    const sun = new THREE.DirectionalLight(0xfff0dc, 2.3);
+    this.scene.add(new THREE.HemisphereLight(0xe4e8ff, 0x2a2b33, 2.1));
+    // Moonlight from the front-left, plus the warm depot lamps
+    const sun = new THREE.DirectionalLight(0xf2f4ff, 2.2);
     sun.position.set(-6, 14, 9);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
@@ -232,13 +233,16 @@ export class DepotStage {
     Object.assign(sun.shadow.camera, { left: -16, right: 44, top: 16, bottom: -12, near: 1, far: 60 });
     sun.target.position.set(12, 0, 3);
     this.scene.add(sun, sun.target);
+    const lamp = new THREE.PointLight(0xfff3b0, 30, 30, 1.6);
+    lamp.position.set(6, 7, 4);
+    this.scene.add(lamp);
   }
 
   private async build() {
     const n = this.columns.length;
     // Floor: a soft platform with painted tile joints
     const x0 = -9, x1 = 47, z0 = -2.2, z1 = this.frontZ + 3;
-    const slab = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.3, z1 - z0), new THREE.MeshStandardMaterial({ color: 0xe6e2f2, roughness: 0.95 }));
+    const slab = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.3, z1 - z0), new THREE.MeshStandardMaterial({ color: 0x2a2c34, roughness: 0.9 }));
     slab.position.set((x0 + x1) / 2, -0.15, (z0 + z1) / 2);
     slab.receiveShadow = true;
     this.scene.add(slab);
@@ -246,7 +250,7 @@ export class DepotStage {
     for (let x = x0 + 2; x < x1; x += 2) joints.push(x, 0.002, z0, x, 0.002, z1);
     for (let z = z0 + 2; z < z1; z += 2) joints.push(x0, 0.002, z, x1, 0.002, z);
     const jointGeo = new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(joints, 3));
-    this.scene.add(new THREE.LineSegments(jointGeo, new THREE.LineBasicMaterial({ color: 0xc9c3de })));
+    this.scene.add(new THREE.LineSegments(jointGeo, new THREE.LineBasicMaterial({ color: 0x373a45 })));
 
     // Warm up every model this scene uses in one parallel batch
     const [wall, windowWide, post, hopper] = await Promise.all([
@@ -275,7 +279,7 @@ export class DepotStage {
     }
 
     // Walkway stripes in front of each rack line
-    const stripeMat = new THREE.MeshStandardMaterial({ color: 0xf2c14e, roughness: 0.8 });
+    const stripeMat = new THREE.MeshStandardMaterial({ color: 0xc9cd45, emissive: 0xfaff69, emissiveIntensity: 0.12, roughness: 0.8 });
     for (let c = 0; c < n; c++) {
       const stripe = new THREE.Mesh(new THREE.BoxGeometry(x1 - START_X - 1, 0.01, 0.05), stripeMat);
       stripe.position.set((START_X - 0.6 + x1) / 2, 0.012, this.walkZ(c) + 0.5);

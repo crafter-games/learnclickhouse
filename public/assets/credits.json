@@ -42,5 +42,28 @@
     "paths": [
       "public/assets/models/kenney-mini-market"
     ]
+  },
+  {
+    "ref": "opengameart:jrpg-pack-2-towns",
+    "title": "JRPG Music Pack #2 [Towns] — Sunshine Coast, Home Town",
+    "type": "audio",
+    "license": "CC0 1.0",
+    "author": "Juhani Junkala (SubspaceAudio)",
+    "url": "https://opengameart.org/content/jrpg-pack-2-towns",
+    "paths": [
+      "public/audio/music/sunshine-coast.ogg",
+      "public/audio/music/home-town.ogg"
+    ]
+  },
+  {
+    "ref": "opengameart:jrpg-pack-5-action",
+    "title": "JRPG Music Pack #5 [Action] — Preparing For Battle",
+    "type": "audio",
+    "license": "CC0 1.0",
+    "author": "Juhani Junkala (SubspaceAudio)",
+    "url": "https://opengameart.org/content/jrpg-pack-5-action",
+    "paths": [
+      "public/audio/music/preparing-for-battle.ogg"
+    ]
   }
 ]

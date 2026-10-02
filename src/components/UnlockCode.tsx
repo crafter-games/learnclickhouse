@@ -40,7 +40,7 @@ export function UnlockCode() {
       <AnimatePresence>
         {open && (
           <motion.div
-            className="fixed inset-0 z-50 grid place-items-center bg-ink/40 p-4"
+            className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -83,7 +83,7 @@ export function UnlockCode() {
                   setState("idle");
                 }}
                 placeholder="XXXXXXXX"
-                className="mt-4 h-12 w-full rounded-xl border border-line bg-paper-2 px-4 text-center font-mono text-lg font-bold uppercase tracking-[0.2em] text-ink outline-none focus:border-indigo focus:bg-white"
+                className="mt-4 h-12 w-full rounded-xl border border-line bg-paper-2 px-4 text-center font-mono text-lg font-bold uppercase tracking-[0.2em] text-ink outline-none focus:border-indigo focus:bg-black/40"
               />
               {state === "bad" && <p className="mt-2 text-sm font-semibold text-danger">{t("bad")}</p>}
               {state === "ok" && <p className="mt-2 text-sm font-semibold text-read-dark">{t("ok")}</p>}

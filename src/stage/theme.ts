@@ -3,13 +3,13 @@
 export const COLORS = {
   ground: 0xdcd8ea,
   ink: 0x2b2840,
-  amber: 0xf5b324,
-  amberDark: 0xc98a0c,
-  read: 0x2fb5a3,
+  amber: 0xf3ea4a,
+  amberDark: 0xb3ab25,
+  read: 0x3ddbb8,
   danger: 0xe5484d,
   paper: 0xfbf8f3,
   screen: 0x1d1b2e,
 } as const;
 
 /** Soft identity colour per column (aisle sign only). */
-export const COLUMN_COLORS = ["#5b5fc7", "#e07a5f", "#3f9f62", "#c2559d", "#4f7fd0", "#b88a1e", "#7a5bc7", "#2a9d8f"];
+export const COLUMN_COLORS = ["#8a8cff", "#ff8a65", "#5ee08a", "#ff7ac6", "#5fb4ff", "#ffb547", "#b48cff", "#4fd1c5"];
