@@ -102,7 +102,8 @@
     "skipLegend": "– saltado · ✓ puede coincidir, se lee · FP falso positivo · ∞ demasiados valores",
     "cache": "Query condition cache",
     "cacheMiss": "Aún sin entrada: se lee entera",
-    "cacheSkipped": "{n, plural, one {# granule saltado} other {# granules saltados}} gracias a la caché"
+    "cacheSkipped": "{n, plural, one {# granule saltado} other {# granules saltados}} gracias a la caché",
+    "spilled": "Por encima del límite de memoria: el hash join vuelca a disco (más lento)."
   },
   "tools": {
     "insert": "Insertar pedidos",
@@ -2257,6 +2258,310 @@
           "why": "{n} × 2 = {total}."
         }
       }
+    },
+    "9-1": {
+      "title": "Muchas manos",
+      "summary": "Bloques vectorizados y rangos de granules repartidos entre max_threads.",
+      "brief": {
+        "title": "Un Pico por núcleo",
+        "body": "ClickHouse procesa <b>bloques de valores de columna</b> de una vez (vectorizado), no fila a fila. Y reparte los granules a leer en rangos, uno por hilo: <code>max_threads</code> vale por defecto el número de núcleos. <code>system.query_log</code> te dice lo que costó cada consulta: <code>read_rows</code>, <code>read_bytes</code>, <code>query_duration_ms</code>. Aquí un granule le cuesta a un hilo 40 ms."
+      },
+      "one": {
+        "q": "SELECT sum(total) lee la columna total: 16 granules. Con max_threads = 1, ¿cuánto vale query_duration_ms?",
+        "why": "640: un solo hilo lee los 16 granules, 40 ms cada uno."
+      },
+      "four": {
+        "q": "La misma consulta con max_threads = 4. ¿query_duration_ms?",
+        "why": "160: cada hilo lee 4 granules a la vez que los demás."
+      },
+      "sla": {
+        "title": "Por debajo de 100 ms",
+        "body": "El dashboard necesita esta consulta por debajo de 100 ms. Elige max_threads y lánzala.",
+        "threads": "max_threads",
+        "counts": {
+          "1": "1",
+          "2": "2",
+          "4": "4",
+          "8": "8"
+        },
+        "run": "SELECT sum(total) FROM hits",
+        "success": "8 hilos, 2 granules cada uno: 80 ms. Más hilos aceleran una consulta pero ocupan más núcleos, que luego no tienen las demás."
+      },
+      "check": {
+        "vector": {
+          "q": "ClickHouse ejecuta los operadores sobre…",
+          "blocks": "Bloques de valores de columna (vectorizado)",
+          "rows": "Una fila cada vez",
+          "pages": "Páginas de disco",
+          "why": "Bloques de arrays de columna, para que la CPU trabaje con muchos valores por instrucción."
+        },
+        "split": {
+          "q": "Una consulta lee {granules} granules con max_threads = {threads}. ¿Cuántos granules lee cada hilo (reparto parejo)?",
+          "why": "{granules} ÷ {threads} = {n}."
+        },
+        "default": {
+          "q": "¿Valor por defecto de max_threads?",
+          "cores": "El número de núcleos de CPU",
+          "one": "1",
+          "unlimited": "Ilimitado",
+          "why": "Tantos como núcleos."
+        },
+        "log": {
+          "q": "¿Dónde encuentras read_rows, read_bytes y query_duration_ms de consultas pasadas?",
+          "queryLog": "system.query_log",
+          "parts": "system.parts",
+          "settings": "system.settings",
+          "why": "system.query_log, una fila por consulta."
+        }
+      }
+    },
+    "9-2": {
+      "title": "PREWHERE",
+      "summary": "Leer primero el filtro; las columnas anchas solo donde hay filas que coinciden.",
+      "brief": {
+        "title": "Filtrar y después traer",
+        "body": "Con <b>PREWHERE</b> ClickHouse lee <b>primero las columnas del filtro</b>, y las demás solo en los granules donde alguna fila coincidió. Casi nunca lo escribes: <code>optimize_move_to_prewhere = 1</code> (por defecto) mueve automáticamente las condiciones adecuadas desde el WHERE. Compensa cuando el filtro es estrecho y las columnas pedidas son anchas, como <code>payload</code> aquí."
+      },
+      "off": {
+        "q": "Con la optimización desactivada: SELECT payload WHERE status = error. ¿En cuántos de los 16 granules se lee payload?",
+        "why": "16: sin PREWHERE se leen todas las columnas de cada granule candidato y se filtra después."
+      },
+      "on": {
+        "q": "Con PREWHERE (por defecto), los errores solo aparecen en 2 granules. ¿Cuántos granules de payload se leen?",
+        "why": "2: status se lee entero (es diminuto) y payload solo donde coincidió alguna fila."
+      },
+      "budget": {
+        "title": "Alguien lo desactivó",
+        "body": "Este servidor tiene optimize_move_to_prewhere = 0. Haz que la consulta lea como mucho el 15% de los bytes de la tabla.",
+        "setting": "optimize_move_to_prewhere",
+        "values": {
+          "0": "0",
+          "1": "1"
+        },
+        "run": "SELECT payload WHERE total > 9000",
+        "success": "PREWHERE leyó total entero y payload en un solo granule. Deja el valor por defecto."
+      },
+      "check": {
+        "what": {
+          "q": "PREWHERE…",
+          "filterFirst": "Lee primero las columnas del filtro y el resto solo donde hay coincidencias",
+          "index": "Construye un índice",
+          "cache": "Cachea el resultado",
+          "why": "Aplaza la lectura de las demás columnas."
+        },
+        "auto": {
+          "q": "¿Hay que escribir PREWHERE a mano?",
+          "auto": "Rara vez: optimize_move_to_prewhere lo mueve solo",
+          "manual": "Siempre",
+          "never": "No está soportado",
+          "why": "Activo por defecto."
+        },
+        "count": {
+          "q": "Un filtro encuentra filas en {hit} de {total} granules. Con PREWHERE, ¿en cuántos granules se lee una columna ancha pedida?",
+          "why": "{hit}: solo donde hay coincidencias."
+        },
+        "best": {
+          "q": "PREWHERE ayuda más cuando las columnas pedidas son…",
+          "wide": "Anchas (strings grandes) y el filtro es selectivo",
+          "narrow": "Diminutas",
+          "key": "La clave de orden",
+          "why": "Se ahorra leer columnas grandes en granules que no coinciden."
+        }
+      }
+    },
+    "9-3": {
+      "title": "Lazy materialization",
+      "summary": "En ORDER BY … LIMIT, leer las columnas anchas al final y solo para las primeras filas.",
+      "brief": {
+        "title": "Ordenar primero, traer después",
+        "body": "<code>SELECT * … ORDER BY total DESC LIMIT 3</code> necesita todos los <code>total</code> para encontrar los 3 primeros, pero solo 3 filas de las demás columnas. La <b>lazy materialization</b> (activa por defecto desde 25.4) lee primero la columna de orden y el resto solo para las filas que quedan dentro. Funciona con LIMITs pequeños."
+      },
+      "off": {
+        "q": "Lazy materialization desactivada: ¿en cuántos de los 16 granules se lee payload?",
+        "why": "16: se leen todas las columnas de todos los granules, se ordena y se tira casi todo."
+      },
+      "on": {
+        "q": "Activada (por defecto): los 3 totales más altos están en un granule. ¿Cuántos granules de payload se leen?",
+        "why": "1: total se lee entero y payload solo del granule que tiene el top 3."
+      },
+      "top": {
+        "title": "Top 3, barato",
+        "body": "Saca los pedidos con mayor total leyendo payload como mucho en un granule.",
+        "lazy": "lazy materialization",
+        "values": {
+          "0": "off",
+          "1": "on"
+        },
+        "limit": "LIMIT",
+        "limits": {
+          "3": "3",
+          "100000": "100000"
+        },
+        "run": "SELECT * ORDER BY total DESC",
+        "success": "Lazy materialization y un LIMIT pequeño: payload de un solo granule. Con un LIMIT enorme casi todos los granules entran igualmente."
+      },
+      "check": {
+        "what": {
+          "q": "La lazy materialization lee las columnas que no son de orden…",
+          "topRows": "Solo para las filas que acaban en el resultado",
+          "allRows": "Para todas las filas",
+          "cache": "Desde una caché",
+          "why": "Después de ordenar, solo para las primeras filas."
+        },
+        "when": {
+          "q": "¿Qué consulta se beneficia?",
+          "limit": "ORDER BY … LIMIT n con columnas anchas",
+          "groupBy": "GROUP BY sin LIMIT",
+          "insert": "INSERT",
+          "why": "Consultas de top-n."
+        },
+        "default": {
+          "q": "¿Está activa por defecto la lazy materialization?",
+          "on": "Sí, desde 25.4",
+          "off": "No",
+          "cloud": "Solo en Cloud",
+          "why": "Activa desde 25.4."
+        },
+        "big": {
+          "q": "Con LIMIT 100000 en vez de 3, el ahorro es…",
+          "less": "Mucho menor: casi todos los granules entran",
+          "same": "El mismo",
+          "more": "Mayor",
+          "why": "Más filas en el resultado, más granules que traer."
+        }
+      }
+    },
+    "9-4": {
+      "title": "Hash joins",
+      "summary": "Qué lado se convierte en la tabla hash en memoria, y quién lo decide.",
+      "hash": "tabla hash: {rows} filas",
+      "halls": {
+        "orders": "orders · 64k filas",
+        "customers": "customers · 5k filas"
+      },
+      "brief": {
+        "title": "Construir y luego sondear",
+        "body": "Un <b>hash join</b> carga un lado en una <b>tabla hash</b> en memoria (el lado de construcción, normalmente la tabla de la derecha) y hace pasar el otro lado por ella. La regla de siempre dice “pon la tabla pequeña a la derecha”. Desde 24.12 el planificador <b>intercambia los lados</b> por su cuenta (<code>query_plan_join_swap_table = ''auto''</code>), y desde 26.5 un hash join que se pasa de memoria <b>vuelca a disco</b> en vez de fallar. El <code>join_algorithm</code> por defecto es <code>direct,parallel_hash,hash,ie_join</code>."
+      },
+      "auto": {
+        "q": "customers JOIN orders: la tabla grande está a la derecha. Con el intercambio del planificador activo (auto), ¿qué tabla se convierte en la tabla hash?",
+        "customers": "customers",
+        "orders": "orders",
+        "why": "customers: el planificador estima los dos lados y construye con el pequeño, da igual el orden del SQL."
+      },
+      "legacy": {
+        "q": "La misma consulta con query_plan_join_swap_table = false. ¿Qué tabla se convierte en la tabla hash?",
+        "customers": "customers",
+        "orders": "orders",
+        "why": "orders, la de la derecha: 64k filas no caben en 1 MiB, así que el join vuelca a disco y se vuelve lento."
+      },
+      "fit": {
+        "title": "La regla de siempre",
+        "body": "En un servidor con el intercambio desactivado, haz que el join quepa en memoria (1 MiB). Elige el orden de las tablas y lánzalo.",
+        "order": "FROM",
+        "orders": {
+          "co": "customers JOIN orders",
+          "oc": "orders JOIN customers"
+        },
+        "swap": "intercambio",
+        "swaps": {
+          "auto": "auto",
+          "false": "false"
+        },
+        "run": "Lanzar el JOIN",
+        "success": "Sin el intercambio, la tabla pequeña tiene que ir a la derecha. Con el valor por defecto (auto) lo hace el planificador, y desde 25.9 incluso reordena joins de varias tablas usando estadísticas."
+      },
+      "check": {
+        "build": {
+          "q": "Sin el intercambio del planificador, ¿qué lado de un hash join se convierte en la tabla hash?",
+          "right": "La tabla de la derecha",
+          "left": "La tabla de la izquierda",
+          "both": "Las dos",
+          "why": "El lado derecho es el de construcción."
+        },
+        "swap": {
+          "q": "query_plan_join_swap_table = 'auto' (desde 24.12)…",
+          "swaps": "Deja que el planificador construya con el lado más pequeño",
+          "never": "Nunca intercambia",
+          "random": "Elige al azar",
+          "why": "Usa estimaciones de tamaño."
+        },
+        "spill": {
+          "q": "Un hash join se pasa de su presupuesto de memoria (26.5+). Entonces…",
+          "spill": "Vuelca a disco y sigue, más lento",
+          "crash": "Siempre falla con MEMORY_LIMIT_EXCEEDED",
+          "skip": "Se salta filas",
+          "why": "Vuelca al 50% de la memoria (max_bytes_ratio_before_external_join)."
+        },
+        "memory": {
+          "q": "Un lado de construcción de {k} filas, a 48 bytes por entrada, ¿cuántos bytes necesita?",
+          "why": "{k} × 48 = {n}."
+        }
+      }
+    },
+    "9-5": {
+      "title": "Diccionarios",
+      "summary": "Búsquedas en memoria con dictGet, recargadas cada LIFETIME.",
+      "dict": "diccionario: {rows, plural, one {# clave} other {# claves}}",
+      "halls": {
+        "orders": "orders",
+        "customers": "customers"
+      },
+      "brief": {
+        "title": "Un mapa en memoria",
+        "body": "Un <b>diccionario</b> carga en memoria un mapa clave → atributos, y <code>dictGet</code> busca valores sin hacer JOIN. Se recarga desde su origen cada <code>LIFETIME</code> (aquí 300–360 s), así que entre recargas puede estar <b>desactualizado</b>. Para filtrar sin más, <code>IN (subconsulta)</code> construye un conjunto y suele salir más barato que un JOIN."
+      },
+      "stale": {
+        "q": "El cliente 2 se muda de Madrid a Lima (INSERT INTO customers). Justo después, ¿qué devuelve dictGet para el cliente 2?",
+        "madrid": "Madrid",
+        "lima": "Lima",
+        "error": "Un error",
+        "why": "Madrid: el diccionario en memoria aún no se ha recargado."
+      },
+      "join": {
+        "q": "¿Y un JOIN con customers en ese mismo momento?",
+        "lima": "Lima",
+        "madrid": "Madrid",
+        "why": "Lima: el JOIN lee la tabla en ese momento."
+      },
+      "reload": {
+        "title": "Búsquedas al día",
+        "body": "Haz que dictGet devuelva las ciudades de hoy para todos los pedidos.",
+        "move": "Cliente 3 → Bogotá",
+        "reload": "SYSTEM RELOAD DICTIONARY",
+        "query": "SELECT dictGet(…)",
+        "success": "Recargado: las búsquedas vuelven a coincidir con la tabla. Elige el LIFETIME según cuánto desfase te puedes permitir."
+      },
+      "check": {
+        "what": {
+          "q": "Un diccionario es…",
+          "memory": "Un mapa clave → atributos guardado en memoria",
+          "table": "Una tabla MergeTree",
+          "index": "Un índice de salto",
+          "why": "En memoria, consultado con dictGet."
+        },
+        "fresh": {
+          "q": "Cuando cambia la tabla origen, un diccionario muestra el cambio…",
+          "lifetime": "En la siguiente recarga (LIFETIME o SYSTEM RELOAD)",
+          "always": "Al instante",
+          "never": "Nunca",
+          "why": "Es una foto fija hasta que se recarga."
+        },
+        "in": {
+          "q": "Para filtrar pedidos por una lista de clientes de otra tabla, suele ser más barato…",
+          "in": "WHERE customer IN (SELECT …)",
+          "join": "Un JOIN",
+          "same": "Da igual",
+          "why": "IN construye un conjunto; no hacen falta columnas de la otra tabla."
+        },
+        "default": {
+          "q": "El join_algorithm por defecto en 26.8 es…",
+          "list": "direct,parallel_hash,hash,ie_join",
+          "hash": "hash",
+          "merge": "full_sorting_merge",
+          "why": "Una lista que se prueba en orden (direct necesita un lado derecho tipo diccionario)."
+        }
+      }
     }
   },
   "map": {
@@ -2308,6 +2613,10 @@
     "w8": {
       "title": "Vistas materializadas",
       "body": "MVs incrementales como triggers de insert, filas parciales en el destino, JOINs, backfills, MVs refrescables y el motor Kafka."
+    },
+    "w9": {
+      "title": "Ejecución de consultas",
+      "body": "Hilos en paralelo, PREWHERE, lazy materialization, hash joins y su lado de construcción, diccionarios y query_log."
     }
   },
   "code": {
