@@ -3,12 +3,12 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useTranslations } from "next-intl";
 import { AnimatePresence, motion } from "motion/react";
-import { CaretLeft, CaretRight, Check, LockSimple, Package, Play, Star } from "@phosphor-icons/react";
+import { CaretLeft, CaretRight, Check, Coffee, Fire, LockSimple, Package, Play, Star } from "@phosphor-icons/react";
 import { Link, useRouter } from "@/i18n/navigation";
 import { audioBus } from "@/audio/audioBus";
 import { WORLDS } from "@/levels";
 import type { Level } from "@/levels/types";
-import { isUnlocked, useProgress } from "@/learning/progress";
+import { dueConcepts, isUnlocked, shiftStreak, useProgress } from "@/learning/progress";
 import type { PlotSpec, WorldMapStage } from "@/stage/worldMapStage";
 import { AudioDirector } from "./AudioDirector";
 import { Hud } from "./Hud";
@@ -27,7 +27,7 @@ type WorldEntry = { id: number; levels: Level[] };
 export function WorldMap() {
   const t = useTranslations("map");
   const router = useRouter();
-  const { levels } = useProgress();
+  const { levels, concepts, shifts } = useProgress();
   // Progress lives in localStorage: build the islands only after mount (avoids a hydration mismatch)
   const mounted = useSyncExternalStore(noop, () => true, () => false);
   const host = useRef<HTMLDivElement>(null);
@@ -42,6 +42,8 @@ export function WorldMap() {
   const [selected, setSelected] = useState<number | null>(null);
   const current = selected ?? Math.max(0, worlds.findIndex((w) => w.id === (nextLevel?.world ?? 1)));
   const world = worlds[current];
+  const due = mounted ? dueConcepts(concepts).length : 0;
+  const streak = mounted ? shiftStreak(shifts) : 0;
   const currentRef = useRef(current);
   useEffect(() => {
     currentRef.current = current;
@@ -146,6 +148,17 @@ export function WorldMap() {
           <Logo />
         </Link>
         <div className="pointer-events-auto flex items-center gap-2">
+          <Link href="/review" className={`${gameButtonClass({ size: "sm" })} relative`} aria-label={t("shift.title")}>
+            <Coffee size={18} weight="fill" className="text-amber-dark" />
+            <span className="hidden sm:inline">{t("shift.title")}</span>
+            {streak > 0 && (
+              <span className="flex items-center gap-0.5 font-display text-amber-dark">
+                <Fire size={14} weight="fill" />
+                {streak}
+              </span>
+            )}
+            {due > 0 && <span className="absolute -right-1.5 -top-1.5 grid size-5 place-items-center rounded-full bg-danger text-[11px] font-extrabold text-white">{due}</span>}
+          </Link>
           <UnlockCode />
           <Link href="/play" className={gameButtonClass({ size: "sm" })} aria-label={t("sandbox.title")}>
             <Package size={18} weight="fill" className="text-indigo" />

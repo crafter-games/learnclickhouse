@@ -52,7 +52,7 @@ export function Landing() {
         const s = stage.current;
         if (!alive || !s) continue;
         if (i % 3 === 1 && table.activeParts.length < 4) {
-          const part = table.insert(GRANULE_ROWS * (2 + (i % 2)) - 700);
+          const part = table.insert(GRANULE_ROWS * (2 + (i % 2)) - 700)!;
           await s.deliver(part);
         } else await s.playQuery(table.plan({ columns: DEMO_QUERIES[i % DEMO_QUERIES.length] }));
         i++;

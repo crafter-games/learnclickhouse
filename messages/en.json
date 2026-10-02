@@ -78,7 +78,10 @@
     "boxes": "Boxes opened",
     "bytes": "Bytes read",
     "rows": "{rows} rows",
-    "tableSize": "Table on disk"
+    "tableSize": "Table on disk",
+    "partsMeter": "Active parts",
+    "partsMeterNote": "Here: slow down at {delay}, reject at {throw}. Real ClickHouse: 1000 and 3000 per partition.",
+    "mark": "mark"
   },
   "tools": {
     "insert": "Insert orders",
@@ -88,7 +91,11 @@
   },
   "stage": {
     "dock": "Dock",
-    "rows": "{table} · by rows"
+    "rows": "{table} · by rows",
+    "hall": "PARTITION {p}",
+    "rejected": "REJECTED · too many parts",
+    "duplicate": "DUPLICATE · ignored",
+    "buffer": "buffer: {rows} rows"
   },
   "levels": {
     "1-1": {
@@ -320,6 +327,800 @@
           "why": "In an OLTP database. ClickHouse parts are immutable; changing single rows is expensive (World 6)."
         }
       }
+    },
+    "2-1": {
+      "title": "One truck, one section",
+      "summary": "Every INSERT becomes a new, immutable part.",
+      "brief": {
+        "title": "Every insert is a part",
+        "body": "Every <b>INSERT</b> arrives like a truck and becomes a new sealed <b>section</b> on the shelves: a <b>part</b>. A part is <b>immutable</b>: once written, ClickHouse never edits it. Its name says where it comes from: <code>partition_minBlock_maxBlock_level</code>. Without PARTITION BY, the partition is called <code>all</code>.",
+        "breaks": "A part isn't furniture: it's a folder on disk with one file per column, its marks and its index."
+      },
+      "map": {
+        "truck": "A truck",
+        "insert": "an INSERT",
+        "section": "A sealed section",
+        "part": "a part (immutable)",
+        "tag": "Its label",
+        "name": "the part name"
+      },
+      "two": {
+        "title": "Two deliveries",
+        "body": "Send two trucks of orders. Watch each one become its own section, with its own label.",
+        "success": "Two inserts, two parts: <code>all_1_1_0</code> and <code>all_2_2_0</code>. Block 1, block 2, level 0 (never merged)."
+      },
+      "third": {
+        "q": "A third truck arrives. What will its part be called?",
+        "a330": "all_3_3_0",
+        "a130": "all_1_3_0",
+        "a331": "all_3_3_1",
+        "a230": "all_2_3_0",
+        "why": "<code>all_3_3_0</code>: block number 3 (from 3 to 3) and level 0, because it hasn't been merged with anything yet."
+      },
+      "fix": {
+        "q": "An order inside <code>all_1_1_0</code> has a wrong total. What does ClickHouse do with that part?",
+        "newPart": "It never edits it: any change writes a new part",
+        "edit": "It edits the row in place",
+        "appendRow": "It appends the fix at the end of the file",
+        "why": "Parts are immutable. Changes are always new parts (mutations, lightweight updates) that replace the old ones later. You'll see the costs in World 4 and beyond."
+      },
+      "real": {
+        "title": "The real thing",
+        "body": "In real ClickHouse you see the parts in <code>system.parts</code>: name, rows and level of each active one."
+      },
+      "check": {
+        "name": {
+          "q": "No merges yet. What is the part of the {k}th insert called?",
+          "opt": "{name}",
+          "why": "<code>{name}</code>: one block per insert, level 0."
+        },
+        "immutable": {
+          "q": "When does ClickHouse modify an existing part?",
+          "never": "Never: changes create new parts",
+          "append": "When new rows arrive",
+          "inplace": "On every UPDATE",
+          "why": "Never. Parts are immutable; new data and changes are always new parts."
+        },
+        "oneRow": {
+          "q": "An INSERT of a single row creates…",
+          "part": "a whole new part",
+          "row": "one more row in the last part",
+          "nothing": "nothing until there are 8192 rows",
+          "why": "A whole part, with its files. That's why row-by-row inserts are a problem (level 2-3)."
+        },
+        "level": {
+          "q": "What does the last number of <code>all_1_1_0</code> mean?",
+          "merges": "How many merges deep it is (level)",
+          "rows": "How many rows it has",
+          "version": "The table version",
+          "why": "The level: 0 for a fresh insert, and it goes up with every merge."
+        }
+      }
+    },
+    "2-2": {
+      "title": "The press",
+      "summary": "Background merges fuse neighbouring parts into bigger ones.",
+      "brief": {
+        "title": "Merges in the background",
+        "body": "Many small parts are slow to read. So ClickHouse runs <b>merges</b> in the background: it takes <b>neighbouring</b> parts of the same partition, sorts their rows together and writes one bigger part. The new name joins the block ranges and adds 1 to the level. The old parts become <b>outdated</b> and are deleted about <b>8 minutes</b> later (<code>old_parts_lifetime</code> = 480 s)."
+      },
+      "first": {
+        "title": "The first merge",
+        "body": "Watch the press come down on <code>all_1_1_0</code> and <code>all_2_2_0</code>. Two parts go in, one comes out."
+      },
+      "next": {
+        "q": "Now the press fuses <code>all_1_2_1</code> with <code>all_3_3_0</code>. What's the new part called?",
+        "a132": "all_1_3_2",
+        "a131": "all_1_3_1",
+        "a331": "all_3_3_1",
+        "a122": "all_1_2_2",
+        "why": "<code>all_1_3_2</code>: blocks 1 to 3, and level = max(1, 0) + 1 = 2."
+      },
+      "gap": {
+        "q": "Could the press fuse <code>all_1_3_2</code> with a part <code>all_5_5_0</code> while <code>all_4_4_0</code> sits between them?",
+        "no": "No: merges only take a contiguous run of parts",
+        "yes": "Yes, any two parts",
+        "fill": "Yes, and it leaves a gap",
+        "why": "No. A merge takes neighbouring parts (consecutive block ranges) of one partition, so the name always describes one continuous range."
+      },
+      "work": {
+        "title": "Let the press work",
+        "body": "Send a few trucks. You don't have to do anything else: the press merges on its own, whenever it decides.",
+        "success": "Nobody pressed OPTIMIZE: merges run continuously in the background. Big parts stop growing around 150 GiB."
+      },
+      "check": {
+        "name": {
+          "q": "The press merges <code>{left}</code> with <code>{right}</code>. Result?",
+          "opt": "{name}",
+          "why": "<code>{name}</code>: the block ranges join and the level is the highest + 1."
+        },
+        "lifetime": {
+          "q": "After a merge, when are the old parts deleted?",
+          "eight": "About 8 minutes later (old_parts_lifetime = 480 s)",
+          "instant": "Instantly",
+          "day": "The next day",
+          "why": "They linger as outdated for 480 s, just in case, then go."
+        },
+        "contiguous": {
+          "q": "Can a merge combine two parts that have another part between them?",
+          "no": "No, only contiguous parts",
+          "yes": "Yes",
+          "night": "Only at night",
+          "why": "No: merges take consecutive parts of one partition."
+        },
+        "optimize": {
+          "q": "What triggers merges?",
+          "auto": "ClickHouse, continuously in the background",
+          "optimize": "Running OPTIMIZE TABLE",
+          "restart": "Restarting the server",
+          "why": "They're automatic. OPTIMIZE … FINAL exists but is rarely needed (and expensive)."
+        }
+      }
+    },
+    "2-3": {
+      "title": "Too many parts",
+      "summary": "Row-by-row inserts make parts faster than merges can fuse them.",
+      "brief": {
+        "title": "The afternoon rush",
+        "body": "An app sends <b>one order per INSERT</b>, several times a second. Every insert is a part, and the press can only fuse so fast. In real ClickHouse, when one partition has <b>1000</b> active parts inserts slow down, and at <b>3000</b> they're rejected: <code>Too many parts</code>. This depot is small, so here the limits are <b>5</b> and <b>15</b>."
+      },
+      "rush": {
+        "title": "Survive the rush",
+        "body": "Keep the depot below the slow-down line for 8 seconds in a row. The app sends tiny inserts; the press is already working flat out. What can you change?",
+        "setting": "Each INSERT carries:",
+        "success": "Batches did it: fewer, bigger inserts, and the press keeps up. The recommendation is 10,000–100,000 rows per INSERT and about one INSERT per second."
+      },
+      "batch": {
+        "single": "1 row",
+        "batch": "10,000 rows"
+      },
+      "math": {
+        "q": "An app sends 50 single-row inserts per second and merges remove 40 parts per second. Starting from 0, how many seconds until the real limit of 3000 parts?",
+        "why": "The parts grow by 50 − 40 = 10 per second: 3000 / 10 = 300 seconds. Five minutes and the inserts start failing."
+      },
+      "real": {
+        "title": "The real fix",
+        "body": "Don't raise the limit: fix the cause. Batch your inserts, or let the server batch them for you with async inserts (next level)."
+      },
+      "check": {
+        "limits": {
+          "q": "Real ClickHouse: at how many active parts per partition does it slow down and then reject inserts?",
+          "l1000": "1000 and 3000",
+          "l100": "100 and 300",
+          "l10k": "10,000 and 30,000",
+          "why": "parts_to_delay_insert = 1000 and parts_to_throw_insert = 3000 (it was 300 before 23.6)."
+        },
+        "scope": {
+          "q": "Those limits count parts…",
+          "partition": "per partition",
+          "table": "in the whole table",
+          "server": "in the whole server",
+          "why": "Per partition (plus a table-wide cap of 100,000 parts)."
+        },
+        "fix": {
+          "q": "You get “Too many parts”. What's the right fix?",
+          "batch": "Bigger, less frequent inserts (or async inserts)",
+          "raise": "Raise parts_to_throw_insert",
+          "partitions": "Add more partitions",
+          "why": "Batching. Raising the limit hides the problem, and more partitions make it worse."
+        },
+        "time": {
+          "q": "{ins} single-row inserts per second, merges remove {mer} parts per second. Seconds until 3000 parts?",
+          "why": "{ins} − {mer} = {net} parts per second → 3000 / {net} ≈ {s} s."
+        }
+      }
+    },
+    "2-4": {
+      "title": "Batches & async inserts",
+      "summary": "The server can batch small inserts for you.",
+      "brief": {
+        "title": "Let the server batch",
+        "body": "Sometimes you can't batch: hundreds of small clients send a row each. With <b>async inserts</b> the server keeps those rows in a <b>buffer</b> and writes one part when the first limit is hit: <b>200 ms</b> (adaptive), <b>10 MiB</b> or <b>450</b> queries. Since <b>26.2</b> it's on by default (<code>async_insert = 1</code>). In this depot, time runs slower: the buffer flushes every 2 seconds."
+      },
+      "clients": {
+        "title": "A swarm of tiny clients",
+        "body": "Hundreds of clients, one tiny insert each. Keep the depot below the slow-down line for 8 seconds in a row.",
+        "setting": "async_insert:",
+        "success": "The hopper collected the rows and flushed one part at a time. Same data, a fraction of the parts."
+      },
+      "async": {
+        "false": "0 (off)",
+        "true": "1 (on)"
+      },
+      "rate": {
+        "q": "200 single-row inserts per second, with async inserts flushing every 200 ms. How many parts per second?",
+        "why": "One part per flush: 1000 ms / 200 ms = 5 parts per second, instead of 200."
+      },
+      "fire": {
+        "q": "Someone sets <code>wait_for_async_insert = 0</code> to go faster. What do they risk?",
+        "lost": "The client never learns if the flush failed: errors only reach the server logs",
+        "faster": "Nothing, it's just faster",
+        "nothing": "The buffer gets bigger",
+        "why": "It's fire-and-forget: if the flush fails, the client already got an OK. The docs recommend <code>async_insert = 1</code> with <code>wait_for_async_insert = 1</code>."
+      },
+      "real": {
+        "title": "The real settings",
+        "body": "These are the defaults since 26.2. ClickHouse Cloud uses a bigger buffer (100 MiB) and a longer timeout."
+      },
+      "check": {
+        "default": {
+          "q": "Since ClickHouse 26.2, async inserts are…",
+          "on": "on by default",
+          "off": "off by default",
+          "cloud": "only available in Cloud",
+          "why": "On: async_insert = 1 by default since 26.2 (some docs pages still say otherwise)."
+        },
+        "first": {
+          "q": "Clients send 1 KB inserts, 100 per second. Which flush limit is hit first?",
+          "time": "The timeout (~200 ms)",
+          "size": "The 10 MiB size",
+          "count": "The 450 queries",
+          "why": "Time: in 200 ms only about 20 inserts (20 KB) arrive, far from 10 MiB or 450 queries."
+        },
+        "wait": {
+          "q": "What's the danger of wait_for_async_insert = 0?",
+          "lost": "Errors go unnoticed by the client",
+          "slow": "Inserts get slower",
+          "nothing": "None",
+          "why": "Fire-and-forget: a failed flush only shows up in the server logs."
+        },
+        "batch": {
+          "q": "Recommended batch size for synchronous inserts?",
+          "b10k": "10,000–100,000 rows",
+          "b1": "1 row",
+          "b10m": "10 million rows",
+          "why": "10k–100k rows per INSERT, about one INSERT per second."
+        }
+      }
+    },
+    "2-5": {
+      "title": "Case: the truck that came twice",
+      "summary": "Insert deduplication drops a retried block.",
+      "brief": {
+        "title": "A new case!",
+        "body": "A client swears they sent a block of orders <b>once</b>. The network failed before the OK arrived, so their program <b>retried</b>. Will the orders be duplicated? ClickHouse keeps a hash of every inserted <b>block</b>: if the exact same block comes back inside the window, it's ignored. Replicated tables and Cloud do it by default; plain MergeTree only if you set <code>non_replicated_deduplication_window</code>. Our depot has it on."
+      },
+      "retry": {
+        "title": "Retry the delivery",
+        "body": "Send block B-17, then retry it exactly as it was. Watch what the dock does with the second truck.",
+        "send17": "Send block B-17",
+        "retry17": "Retry B-17",
+        "send18": "Send block B-18",
+        "success": "The retry was turned away: same block, same hash. Safe retries are why deduplication exists."
+      },
+      "changed": {
+        "q": "Objection! The client edits one order inside B-17 and retries. What happens?",
+        "inserted": "It's inserted: a different block has a different hash",
+        "dropped": "It's dropped as a duplicate",
+        "merged": "It replaces the first B-17",
+        "why": "Inserted, because deduplication compares whole blocks. Now the unchanged orders exist twice. Retry the exact same block, or use an <code>insert_deduplication_token</code>."
+      },
+      "diagnose": {
+        "q": "Second witness: a dashboard app inserts one row at a time and the parts keep piling up. Your verdict?",
+        "async": "Turn on async inserts or batch the rows",
+        "raise": "Raise parts_to_throw_insert",
+        "partition": "Partition by day",
+        "why": "Batching (by the client or the server). Raising the limit or partitioning more only makes it worse."
+      },
+      "verdict": {
+        "q": "Final question: two different INSERTs each contain order 4200. How many copies end up in the table?",
+        "both": "Both copies",
+        "one": "One: the primary key is unique",
+        "error": "The second INSERT fails",
+        "why": "Both. Deduplication is per block, not per key, and the primary key isn't unique (World 3). Removing duplicate rows is another tool: ReplacingMergeTree."
+      },
+      "check": {
+        "what": {
+          "q": "Insert deduplication compares…",
+          "block": "the hash of the whole inserted block",
+          "row": "every row",
+          "key": "the primary key",
+          "why": "The block's hash: it makes retries safe, it doesn't dedupe rows."
+        },
+        "window": {
+          "q": "Default replicated deduplication window?",
+          "w10k": "The last 10,000 blocks, up to 1 hour",
+          "w100": "The last 100 blocks",
+          "forever": "Forever",
+          "why": "replicated_deduplication_window = 10,000 blocks and …_seconds = 3600 (current defaults)."
+        },
+        "plain": {
+          "q": "On a plain (non-replicated) MergeTree, insert deduplication is by default…",
+          "off": "off (window 0)",
+          "on": "on",
+          "async": "only for async inserts",
+          "why": "Off: non_replicated_deduplication_window = 0 unless you set it."
+        },
+        "notUnique": {
+          "q": "Two different blocks contain the same order. Result?",
+          "both": "Both rows are kept",
+          "one": "One row",
+          "error": "An error",
+          "why": "Both: different blocks have different hashes."
+        }
+      }
+    },
+    "3-1": {
+      "title": "Boxes of 8192",
+      "summary": "The granule: the smallest thing ClickHouse reads.",
+      "brief": {
+        "title": "Granules",
+        "body": "Inside each part, rows are <b>sorted by the ORDER BY</b> and cut into <b>granules</b> of up to <b>8192 rows</b> (<code>index_granularity</code>). One box is one granule of one column. ClickHouse never reads a single row: the smallest thing it reads is a whole granule.",
+        "breaks": "8192 is a maximum: with very wide rows a granule can hold fewer (index_granularity_bytes = 10 MiB)."
+      },
+      "map": {
+        "box": "A box",
+        "granule": "a granule (≤ 8192 rows of one column)",
+        "order": "Boxes in order",
+        "orderBy": "rows sorted by ORDER BY inside the part"
+      },
+      "count": {
+        "q": "A part has 100,000 rows. How many granules?",
+        "why": "100,000 / 8192 = 12.2 → 13 granules (the last one is partly full)."
+      },
+      "oneRow": {
+        "q": "<code>WHERE customer_id = 4200</code> matches a single order. At least how many rows does ClickHouse read?",
+        "one": "1",
+        "granule": "A whole granule (up to 8192)",
+        "all": "All the rows",
+        "why": "A whole granule: the index points to granules, not to rows. That's the price of a tiny index."
+      },
+      "find": {
+        "title": "Find customer 777",
+        "body": "The query already filters <code>WHERE customer_id = 777</code>. Pick its column and run it: Pico should open a single granule per column.",
+        "success": "One granule: the table is sorted by customer_id, so the index knew exactly where to look."
+      },
+      "check": {
+        "count": {
+          "q": "How many granules for {rows} rows?",
+          "why": "{rows} / 8192, rounded up = {n}."
+        },
+        "unit": {
+          "q": "What is the smallest unit ClickHouse reads?",
+          "granule": "A granule",
+          "row": "A row",
+          "part": "A whole part",
+          "why": "A granule (of each column it needs)."
+        },
+        "size": {
+          "q": "Default index_granularity?",
+          "g8192": "8192 rows",
+          "g1024": "1024 rows",
+          "g65536": "65,536 rows",
+          "why": "8192 rows (capped by 10 MiB per granule)."
+        },
+        "sorted": {
+          "q": "The rows are sorted by ORDER BY…",
+          "part": "inside each part",
+          "table": "across the whole table",
+          "never": "never",
+          "why": "Inside each part. Different parts overlap until they're merged."
+        }
+      }
+    },
+    "3-2": {
+      "title": "The board at the entrance",
+      "summary": "A sparse index: one entry per granule.",
+      "brief": {
+        "title": "The sparse index",
+        "body": "At the entrance there's a board: <code>primary.idx</code>. It has <b>one entry per granule</b>: the key of the granule's first row. It's tiny (the docs' table: 8.87 million rows, 1083 entries, 97 KiB), so it lives in memory. To find a key, ClickHouse does a <b>binary search</b> on the board and reads only the granules that can contain it."
+      },
+      "search": {
+        "title": "Looking up a customer",
+        "body": "Watch the board on the right: for customer 5100 only one entry can match, and Pico goes straight to that box."
+      },
+      "entries": {
+        "q": "A part has 1083 granules. How many entries does its primary.idx have?",
+        "why": "1083: one per granule. That's why it's called sparse."
+      },
+      "holds": {
+        "q": "What does the primary index store?",
+        "first": "The key values of each granule's first row",
+        "every": "The key of every row",
+        "offsets": "Byte offsets in the column files",
+        "why": "The first key of each granule. Offsets live in the <b>marks</b> files (one per column), which tell ClickHouse where each granule starts."
+      },
+      "lean": {
+        "title": "The leanest lookup",
+        "body": "Read only the total of customer 3100. Aim for the minimum: one granule of the filter column plus one of total.",
+        "success": "2 boxes out of 72: the filter column (to check) and total (the answer)."
+      },
+      "check": {
+        "entries": {
+          "q": "The primary index has one entry per…",
+          "granule": "granule",
+          "row": "row",
+          "part": "part",
+          "why": "Granule: sparse, small, in memory."
+        },
+        "marks": {
+          "q": "What do the marks files store?",
+          "offsets": "Where each granule starts in a column file",
+          "keys": "Key values",
+          "rows": "Row numbers",
+          "why": "Offsets (compressed block, offset inside it) so a reader can jump to granule N."
+        },
+        "size": {
+          "q": "A part has {g} granules. How many primary-index entries?",
+          "why": "{g}, one per granule."
+        },
+        "memory": {
+          "q": "Where does the primary index live?",
+          "memory": "In memory (it's tiny)",
+          "disk": "Only on disk",
+          "never": "It isn't stored",
+          "why": "In memory (loaded lazily since 24.2): it's a few KiB per million rows."
+        }
+      }
+    },
+    "3-3": {
+      "title": "Second in line",
+      "summary": "The order of the key columns decides what can be skipped.",
+      "brief": {
+        "title": "Two columns in the key",
+        "body": "With <code>ORDER BY (a, b)</code> the data is sorted by <code>a</code>, and by <code>b</code> only inside each value of <code>a</code>. A filter on <code>a</code> uses binary search. A filter on <code>b</code> can only skip a granule when <code>a</code> is <b>constant</b> inside it. In the docs: first column → 1 of 1083 granules; second column → 1076 of 1083. So put the <b>low-cardinality</b> column first."
+      },
+      "cityFirst": {
+        "q": "<code>ORDER BY (customer_id, city)</code>: how many of the 24 granules does <code>WHERE city = 'Lima''</code> read?",
+        "why": "All 24: each granule mixes many customers, so city takes every value in every granule. The index can't rule anything out."
+      },
+      "swap": {
+        "q": "Same data with <code>ORDER BY (city, customer_id)</code>. How many granules now?",
+        "why": "4: all the Limas sit together, so only Lima's granules are read."
+      },
+      "daily": {
+        "title": "The daily reports",
+        "body": "Two reports run every day: one by city, one by customer. Choose the key and run both: together they must read <b>10 granules or fewer</b>.",
+        "qa": "Report A: city = 'Lima'",
+        "qb": "Report B: customer_id = 4200",
+        "success": "City first: 4 + 6 = 10 granules. Customer first would be 24 + 1 = 25. Low cardinality first helps the second column too."
+      },
+      "check": {
+        "rule": {
+          "q": "Which column usually goes first in ORDER BY?",
+          "low": "The one with fewer distinct values",
+          "high": "The most selective one",
+          "alpha": "Alphabetical order",
+          "why": "Low cardinality first: it keeps later columns prunable and compresses better."
+        },
+        "docs": {
+          "q": "Docs: 1/1083 granules for one filter, 1076/1083 for another. Which filtered the second key column?",
+          "second": "The 1076/1083 one",
+          "first": "The 1/1083 one",
+          "both": "Both equally",
+          "why": "The second column barely prunes when the first has high cardinality."
+        },
+        "when": {
+          "q": "When can a filter on the 2nd key column skip a granule?",
+          "constant": "When the 1st column is constant inside it",
+          "always": "Always",
+          "never": "Never",
+          "why": "Only then is the 2nd column's range in that granule meaningful (generic exclusion search)."
+        },
+        "notInKey": {
+          "q": "A filter on a column that isn't in the key reads…",
+          "all": "every granule (of the needed columns)",
+          "half": "half",
+          "none": "none",
+          "why": "The primary index can't help; skipping indexes might (World 7)."
+        }
+      }
+    },
+    "3-4": {
+      "title": "The key isn't unique",
+      "summary": "PRIMARY KEY sorts and indexes; it doesn't forbid duplicates.",
+      "brief": {
+        "title": "Not a uniqueness rule",
+        "body": "In Postgres a primary key is unique. In ClickHouse it isn't: <code>PRIMARY KEY</code> only decides what goes into the sparse index. By default it's the ORDER BY; if you set it, it must be a <b>prefix</b> of the ORDER BY. Two rows with the same key happily coexist."
+      },
+      "twice": {
+        "q": "You insert another batch that also contains orders of customer 4200 (same key). How many parts hold customer 4200 now?",
+        "two": "Two: both rows are kept",
+        "one": "One: the old row is replaced",
+        "error": "The insert fails",
+        "why": "Two. Nobody checks uniqueness; the new part simply has its own copy."
+      },
+      "both": {
+        "title": "Find both copies",
+        "body": "Read customer 4200: Pico has to visit both sections.",
+        "success": "One granule in each part. Removing duplicates is a job for ReplacingMergeTree (a later world)."
+      },
+      "prefix": {
+        "q": "Is this table valid?",
+        "valid": "Valid",
+        "invalid": "Invalid",
+        "why": "Invalid: PRIMARY KEY must be a prefix of ORDER BY, so it could be <code>city</code> or <code>(city, customer_id)</code>, not <code>customer_id</code>."
+      },
+      "real": {
+        "title": "PRIMARY KEY vs ORDER BY",
+        "body": "A shorter PRIMARY KEY makes the index smaller while the data stays sorted by the full ORDER BY."
+      },
+      "check": {
+        "unique": {
+          "q": "Does a ClickHouse PRIMARY KEY enforce uniqueness?",
+          "no": "No",
+          "yes": "Yes",
+          "replicated": "Only on replicated tables",
+          "why": "No. It's a sorting and indexing choice."
+        },
+        "prefix": {
+          "q": "If you set PRIMARY KEY separately, it must be…",
+          "prefix": "a prefix of ORDER BY",
+          "any": "any columns",
+          "same": "different from ORDER BY",
+          "why": "A prefix of the ORDER BY."
+        },
+        "count": {
+          "q": "You insert the same order {n} times in {n} INSERTs. How many rows match its key?",
+          "why": "{n}: nothing deduplicates by key in a plain MergeTree."
+        },
+        "dedupe": {
+          "q": "Which tool removes duplicate rows by key (eventually)?",
+          "replacing": "ReplacingMergeTree",
+          "pk": "The PRIMARY KEY",
+          "index": "A skipping index",
+          "why": "ReplacingMergeTree, during merges."
+        }
+      }
+    },
+    "3-5": {
+      "title": "Case: EXPLAIN",
+      "summary": "Read the funnel and pick the key for a real workload.",
+      "brief": {
+        "title": "The slow dashboard",
+        "body": "A new case: the dashboard is slow. Your evidence is <code>EXPLAIN indexes = 1</code>: for each index stage it shows <b>Parts</b> and <b>Granules</b> selected out of the total. Fewer granules, less work."
+      },
+      "limit": {
+        "q": "Exhibit A: <code>SELECT * … ORDER BY total DESC LIMIT 1</code>. How many of the 24 granules are read?",
+        "why": "All 24: total isn't in the key, so the only way to find the biggest is to look at every one. LIMIT doesn't shorten the scan (lazy materialization only defers the other columns)."
+      },
+      "fix": {
+        "title": "Fix the dashboard",
+        "body": "Three dashboard queries. Pick the key, run all three and watch EXPLAIN: together they must read <b>14 granules or fewer</b>.",
+        "q1": "Q1: city = 'Quito'",
+        "q2": "Q2: city = 'Lima'",
+        "q3": "Q3: customer_id = 9100",
+        "success": "City first: 4 + 4 + 6 = 14. Customer first: 24 + 24 + 1. Case closed!"
+      },
+      "check": {
+        "read": {
+          "q": "EXPLAIN says <code>Granules: {sel}/{total}</code>. What percentage is read?",
+          "why": "{sel} / {total} ≈ {pct}%."
+        },
+        "limit": {
+          "q": "ORDER BY a column outside the key with LIMIT 1 reads…",
+          "all": "every granule",
+          "one": "one granule",
+          "half": "half",
+          "why": "Everything: to know the top row it must see all of them."
+        },
+        "pick": {
+          "q": "Most queries filter by city, some by customer. Best ORDER BY?",
+          "cityFirst": "(city, customer_id)",
+          "custFirst": "(customer_id, city)",
+          "total": "(total)",
+          "why": "City first: low cardinality, and customer still prunes inside each city."
+        },
+        "stage": {
+          "q": "Which EXPLAIN stage shows the sparse index at work?",
+          "pk": "PrimaryKey",
+          "partition": "Partition",
+          "skip": "Skip",
+          "why": "PrimaryKey (Partition is partition pruning, Skip is skipping indexes)."
+        }
+      }
+    },
+    "4-1": {
+      "title": "Separate halls",
+      "summary": "Partitions: separate halls that never mix.",
+      "brief": {
+        "title": "PARTITION BY",
+        "body": "With <code>PARTITION BY toYYYYMM(date)</code> every month gets its own <b>hall</b>. Each part belongs to one partition, merges <b>never cross</b> partitions, and an INSERT that spans several months creates one part per month. Each part also remembers the min and max of the partition key, so a filter on the date can skip whole parts.",
+        "breaks": "A partition isn't a building: it's a label on each part. The halls only show which parts share one."
+      },
+      "map": {
+        "hall": "A hall",
+        "partition": "a partition (one month)"
+      },
+      "split": {
+        "title": "An insert across months",
+        "body": "One INSERT with orders from September and October arrives. Watch it split into two parts, one per hall."
+      },
+      "three": {
+        "q": "An INSERT has orders from 3 different months. How many parts does it create?",
+        "why": "3: one per partition it touches."
+      },
+      "cross": {
+        "q": "Could the press merge a part from August with one from September?",
+        "no": "No: merges stay inside a partition",
+        "yes": "Yes, if they're neighbours",
+        "why": "No. Merges only combine parts of the same partition. Watch August's two parts merge with each other."
+      },
+      "sept": {
+        "title": "The August report",
+        "body": "The report filters on August. Pick the column and run it: the other halls should be skipped entirely.",
+        "success": "EXPLAIN shows it: Partition stage, 1 part of 5. The other months were never opened."
+      },
+      "check": {
+        "parts": {
+          "q": "One INSERT contains rows from {n} months (monthly partitions). How many parts?",
+          "why": "{n}, one per partition."
+        },
+        "merge": {
+          "q": "Do parts from different partitions ever merge?",
+          "never": "Never",
+          "night": "At night",
+          "optimize": "With OPTIMIZE",
+          "why": "Never: each partition is merged on its own."
+        },
+        "prune": {
+          "q": "How does partition pruning skip parts?",
+          "minmax": "With each part's min/max of the partition key",
+          "name": "Only if the query names the partition ID",
+          "scan": "It reads everything",
+          "why": "minmax_*.idx per part: any filter on the key columns works."
+        },
+        "purpose": {
+          "q": "What are partitions mainly for?",
+          "manage": "Managing data (drop, move, TTL)",
+          "speed": "Making queries faster",
+          "unique": "Enforcing uniqueness",
+          "why": "Data management. Speed comes from the ORDER BY."
+        }
+      }
+    },
+    "4-2": {
+      "title": "Partitioning doesn't speed things up",
+      "summary": "Query speed comes from the ORDER BY.",
+      "brief": {
+        "title": "A common mix-up",
+        "body": "Many people partition to make queries fast. The docs are blunt: <b>partitioning does not speed up queries</b>, the ORDER BY does. Partition pruning only helps queries that filter on the partition key. Here the table is partitioned by month and sorted by date."
+      },
+      "customer": {
+        "q": "8 granules spread over 4 months. How many does <code>WHERE customer_id = 4200</code> read?",
+        "why": "All 8: the partitions are by month and the order is by date, so nothing tells ClickHouse where customer 4200 is."
+      },
+      "fix": {
+        "title": "Make the customer query fast",
+        "body": "Keep the monthly partitions. Change what really matters and run the customer query: read <b>4 granules or fewer</b>.",
+        "run": "Run: customer_id = 4200",
+        "success": "ORDER BY customer_id: one granule per month. Same partitions, a quarter of the reading."
+      },
+      "check": {
+        "speed": {
+          "q": "What makes a filtered query fast?",
+          "orderBy": "An ORDER BY that matches the filter",
+          "partition": "More partitions",
+          "both": "Partitions, always",
+          "why": "The ORDER BY (and the sparse index on it)."
+        },
+        "whenHelps": {
+          "q": "Partition pruning helps…",
+          "partitionKey": "queries that filter on the partition key",
+          "anyFilter": "any filter",
+          "never": "never",
+          "why": "Only queries that filter on the partition key's columns."
+        },
+        "need": {
+          "q": "The docs' advice on partition keys?",
+          "often": "Often you don't need one; if time-based, monthly",
+          "always": "Always partition by day",
+          "pk": "Partition by the primary key",
+          "why": "“In most cases you don't need a partition key.” If you do, monthly."
+        },
+        "months": {
+          "q": "Monthly partitions, query for one customer with no date filter, data from {months} months. How many partitions are scanned?",
+          "why": "{months}: without a date filter, every partition."
+        }
+      }
+    },
+    "4-3": {
+      "title": "Too many halls",
+      "summary": "Fine-grained partitions multiply parts and hit limits.",
+      "brief": {
+        "title": "Day? Customer? Month?",
+        "body": "An INSERT creates one part per partition it touches. Partition by day and a week of orders is 7 parts; partition by customer and one INSERT can touch hundreds of partitions. ClickHouse refuses an INSERT that touches more than <b>100</b> (<code>max_partitions_per_insert_block</code>). Keep the total in the thousands at most."
+      },
+      "pick": {
+        "title": "Choose the partition key",
+        "body": "Insert one week of orders with each key. First get an INSERT rejected, then empty the depot and end with a key that leaves 2 parts or fewer.",
+        "day": "A week, PARTITION BY day",
+        "customer": "A week, PARTITION BY customer",
+        "month": "A week, PARTITION BY month",
+        "truncate": "Empty the depot",
+        "success": "Monthly: one week, one part. By day: 7 parts per insert. By customer: rejected for touching 480 partitions."
+      },
+      "error": {
+        "q": "Which limit rejected the INSERT partitioned by customer?",
+        "partitions": "Too many partitions for a single INSERT block (over 100)",
+        "parts": "Too many parts",
+        "memory": "Memory limit",
+        "why": "max_partitions_per_insert_block = 100: one block can't spread over more partitions than that."
+      },
+      "check": {
+        "limit": {
+          "q": "max_partitions_per_insert_block defaults to…",
+          "l100": "100",
+          "l1000": "1000",
+          "none": "no limit",
+          "why": "100."
+        },
+        "key": {
+          "q": "A time-based partition key for most tables?",
+          "month": "Month: toYYYYMM(date)",
+          "day": "Day",
+          "customer": "Customer id",
+          "why": "Monthly, if any."
+        },
+        "days": {
+          "q": "Partition by day: one INSERT has orders from {days} days. How many parts?",
+          "why": "{days}, one per day touched."
+        },
+        "total": {
+          "q": "How many partitions should a table have at most?",
+          "thousands": "Under about 1000–10,000",
+          "millions": "Millions are fine",
+          "unlimited": "As many as you like",
+          "why": "Keep it under ~1000–10,000: every partition multiplies parts and merges."
+        }
+      }
+    },
+    "4-4": {
+      "title": "Case: delete September",
+      "summary": "DROP PARTITION, lightweight DELETE and mutations: three very different costs.",
+      "brief": {
+        "title": "A request to forget",
+        "body": "Final case of the world: legal asks to delete all of a month's orders. There are three ways. <code>ALTER TABLE … DELETE</code> is a <b>mutation</b>: it rewrites every affected part. <code>DELETE FROM</code> is <b>lightweight</b>: it masks the rows, and the space is freed by later merges. <code>DROP PARTITION</code> removes the whole partition at once, as metadata."
+      },
+      "guess": {
+        "q": "Which one is cheapest for deleting a whole month?",
+        "drop": "ALTER TABLE … DROP PARTITION",
+        "lightweight": "DELETE FROM … WHERE",
+        "mutation": "ALTER TABLE … DELETE WHERE",
+        "why": "DROP PARTITION: no data is read or rewritten. That's why you design PARTITION BY around how you delete."
+      },
+      "compare": {
+        "title": "Try all three",
+        "body": "Delete each month with a different method and compare: August with a mutation, September with DROP PARTITION, October with a lightweight DELETE.",
+        "mutation": "August: ALTER … DELETE",
+        "lightweight": "October: DELETE FROM",
+        "drop": "September: DROP PARTITION",
+        "success": "The mutation rewrote box after box. DROP PARTITION was instant. The lightweight DELETE masked October, but its boxes still take space until a merge."
+      },
+      "real": {
+        "title": "The real commands",
+        "body": "Mutations run asynchronously (watch <code>system.mutations</code>). Lightweight DELETE has been GA since 23.3."
+      },
+      "check": {
+        "cheapest": {
+          "q": "Cheapest way to delete a whole month (monthly partitions)?",
+          "drop": "DROP PARTITION",
+          "lightweight": "DELETE FROM",
+          "mutation": "ALTER TABLE … DELETE",
+          "why": "DROP PARTITION, a metadata operation."
+        },
+        "mutation": {
+          "q": "What does ALTER TABLE … DELETE do to the parts?",
+          "rewrite": "Rewrites every affected part",
+          "mask": "Masks the rows",
+          "metadata": "Changes metadata only",
+          "why": "It rewrites whole parts, asynchronously: heavy."
+        },
+        "space": {
+          "q": "After a lightweight DELETE, when is the disk space freed?",
+          "merge": "When later merges rewrite those parts",
+          "instant": "Instantly",
+          "never": "Never",
+          "why": "The rows are hidden at once, removed by merges."
+        },
+        "design": {
+          "q": "You must delete data month by month. Which PARTITION BY helps most?",
+          "month": "By month",
+          "customer": "By customer",
+          "none": "No partition key",
+          "why": "By month: each deletion becomes a DROP PARTITION."
+        }
+      }
     }
   },
   "map": {
@@ -350,6 +1151,9 @@
     "w4": {
       "title": "Partitions",
       "body": "Separate halls for managing data: pruning, why partitions don't make queries faster, and the cheapest delete there is."
+    },
+    "shift": {
+      "title": "Morning shift"
     }
   },
   "code": {
@@ -370,5 +1174,22 @@
     "credits": "3D art: Kenney (CC0). Music and sounds generated in code. Full credits in",
     "madeBy": "Made by",
     "github": "Source code on GitHub"
+  },
+  "review": {
+    "title": "Morning shift",
+    "back": "Back to the map",
+    "map": "World map",
+    "streak": "{n, plural, =0 {Start a streak today} one {# day streak} other {# day streak}}",
+    "done": "Shift complete!",
+    "score": "You remembered {correct} of {total}. The concepts you missed will come back sooner.",
+    "emptyTitle": "Nothing to review yet",
+    "emptyBody": "Finish your first level and its concepts will start showing up here.",
+    "dueTitle": "{n, plural, one {# concept} other {# concepts}} to refresh",
+    "dueBody": "A few quick questions on things you learned a while ago, mixed together.",
+    "caughtUp": "All caught up!",
+    "nextOn": "Your next review is due on {date}.",
+    "start": "Start the shift",
+    "practice": "Practise the weakest ones",
+    "why": "Why? Recalling something right when you're about to forget it is one of the most effective ways to make it stick (spaced retrieval practice)."
   }
 }

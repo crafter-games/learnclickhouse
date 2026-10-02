@@ -78,7 +78,10 @@
     "boxes": "Cajas abiertas",
     "bytes": "Bytes leídos",
     "rows": "{rows} filas",
-    "tableSize": "Tabla en disco"
+    "tableSize": "Tabla en disco",
+    "partsMeter": "Parts activas",
+    "partsMeterNote": "Aquí: frena en {delay}, rechaza en {throw}. En ClickHouse real: 1000 y 3000 por partición.",
+    "mark": "marca"
   },
   "tools": {
     "insert": "Insertar pedidos",
@@ -88,7 +91,11 @@
   },
   "stage": {
     "dock": "Muelle",
-    "rows": "{table} · por filas"
+    "rows": "{table} · por filas",
+    "hall": "PARTICIÓN {p}",
+    "rejected": "RECHAZADO · demasiadas parts",
+    "duplicate": "DUPLICADO · ignorado",
+    "buffer": "buffer: {rows} filas"
   },
   "levels": {
     "1-1": {
@@ -320,6 +327,800 @@
           "why": "En una base OLTP. Las parts de ClickHouse son inmutables; cambiar filas sueltas es caro (mundo 6)."
         }
       }
+    },
+    "2-1": {
+      "title": "Cada camión, una sección",
+      "summary": "Cada INSERT se convierte en una part nueva e inmutable.",
+      "brief": {
+        "title": "Cada insert es una part",
+        "body": "Cada <b>INSERT</b> llega como un camión y se convierte en una <b>sección</b> sellada nueva en las estanterías: una <b>part</b>. Una part es <b>inmutable</b>: una vez escrita, ClickHouse nunca la edita. Su nombre dice de dónde viene: <code>partición_bloqueMin_bloqueMax_nivel</code>. Sin PARTITION BY, la partición se llama <code>all</code>.",
+        "breaks": "Una part no es un mueble: es una carpeta en disco con un archivo por columna, sus marcas y su índice."
+      },
+      "map": {
+        "truck": "Un camión",
+        "insert": "un INSERT",
+        "section": "Una sección sellada",
+        "part": "una part (inmutable)",
+        "tag": "Su etiqueta",
+        "name": "el nombre de la part"
+      },
+      "two": {
+        "title": "Dos entregas",
+        "body": "Manda dos camiones de pedidos. Mira cómo cada uno se convierte en su propia sección, con su propia etiqueta.",
+        "success": "Dos inserts, dos parts: <code>all_1_1_0</code> y <code>all_2_2_0</code>. Bloque 1, bloque 2, nivel 0 (nunca fusionadas)."
+      },
+      "third": {
+        "q": "Llega un tercer camión. ¿Cómo se llamará su part?",
+        "a330": "all_3_3_0",
+        "a130": "all_1_3_0",
+        "a331": "all_3_3_1",
+        "a230": "all_2_3_0",
+        "why": "<code>all_3_3_0</code>: bloque número 3 (del 3 al 3) y nivel 0, porque todavía no se ha fusionado con nada."
+      },
+      "fix": {
+        "q": "Un pedido dentro de <code>all_1_1_0</code> tiene mal el total. ¿Qué hace ClickHouse con esa part?",
+        "newPart": "Nunca la edita: cualquier cambio escribe una part nueva",
+        "edit": "Edita la fila en su sitio",
+        "appendRow": "Añade la corrección al final del archivo",
+        "why": "Las parts son inmutables. Los cambios siempre son parts nuevas (mutaciones, updates ligeros) que más tarde sustituyen a las viejas. Verás lo que cuestan en el mundo 4 y después."
+      },
+      "real": {
+        "title": "La versión real",
+        "body": "En ClickHouse de verdad ves las parts en <code>system.parts</code>: nombre, filas y nivel de cada una activa."
+      },
+      "check": {
+        "name": {
+          "q": "Todavía sin merges. ¿Cómo se llama la part del insert número {k}?",
+          "opt": "{name}",
+          "why": "<code>{name}</code>: un bloque por insert, nivel 0."
+        },
+        "immutable": {
+          "q": "¿Cuándo modifica ClickHouse una part existente?",
+          "never": "Nunca: los cambios crean parts nuevas",
+          "append": "Cuando llegan filas nuevas",
+          "inplace": "En cada UPDATE",
+          "why": "Nunca. Las parts son inmutables; los datos nuevos y los cambios siempre son parts nuevas."
+        },
+        "oneRow": {
+          "q": "Un INSERT de una sola fila crea…",
+          "part": "una part entera nueva",
+          "row": "una fila más en la última part",
+          "nothing": "nada hasta tener 8192 filas",
+          "why": "Una part entera, con sus archivos. Por eso insertar fila a fila es un problema (nivel 2-3)."
+        },
+        "level": {
+          "q": "¿Qué significa el último número de <code>all_1_1_0</code>?",
+          "merges": "Cuántos merges lleva encima (nivel)",
+          "rows": "Cuántas filas tiene",
+          "version": "La versión de la tabla",
+          "why": "El nivel: 0 para un insert recién llegado, y sube con cada merge."
+        }
+      }
+    },
+    "2-2": {
+      "title": "La prensa",
+      "summary": "Los merges en segundo plano fusionan parts vecinas en otras más grandes.",
+      "brief": {
+        "title": "Merges en segundo plano",
+        "body": "Muchas parts pequeñas son lentas de leer. Por eso ClickHouse hace <b>merges</b> en segundo plano: toma parts <b>vecinas</b> de la misma partición, ordena sus filas juntas y escribe una part más grande. El nombre nuevo junta los rangos de bloques y suma 1 al nivel. Las parts viejas quedan <b>obsoletas</b> y se borran unos <b>8 minutos</b> después (<code>old_parts_lifetime</code> = 480 s)."
+      },
+      "first": {
+        "title": "El primer merge",
+        "body": "Mira cómo baja la prensa sobre <code>all_1_1_0</code> y <code>all_2_2_0</code>. Entran dos parts, sale una."
+      },
+      "next": {
+        "q": "Ahora la prensa fusiona <code>all_1_2_1</code> con <code>all_3_3_0</code>. ¿Cómo se llama la part nueva?",
+        "a132": "all_1_3_2",
+        "a131": "all_1_3_1",
+        "a331": "all_3_3_1",
+        "a122": "all_1_2_2",
+        "why": "<code>all_1_3_2</code>: bloques del 1 al 3, y nivel = máx(1, 0) + 1 = 2."
+      },
+      "gap": {
+        "q": "¿Podría la prensa fusionar <code>all_1_3_2</code> con una part <code>all_5_5_0</code> si <code>all_4_4_0</code> está en medio?",
+        "no": "No: los merges solo toman parts contiguas",
+        "yes": "Sí, dos parts cualesquiera",
+        "fill": "Sí, y deja un hueco",
+        "why": "No. Un merge toma parts vecinas (rangos de bloques consecutivos) de una partición, así el nombre siempre describe un rango continuo."
+      },
+      "work": {
+        "title": "Deja trabajar a la prensa",
+        "body": "Manda unos cuantos camiones. No tienes que hacer nada más: la prensa fusiona sola, cuando ella decide.",
+        "success": "Nadie pulsó OPTIMIZE: los merges corren continuamente en segundo plano. Las parts grandes dejan de crecer hacia los 150 GiB."
+      },
+      "check": {
+        "name": {
+          "q": "La prensa fusiona <code>{left}</code> con <code>{right}</code>. ¿Resultado?",
+          "opt": "{name}",
+          "why": "<code>{name}</code>: los rangos de bloques se juntan y el nivel es el mayor + 1."
+        },
+        "lifetime": {
+          "q": "Tras un merge, ¿cuándo se borran las parts viejas?",
+          "eight": "Unos 8 minutos después (old_parts_lifetime = 480 s)",
+          "instant": "Al instante",
+          "day": "Al día siguiente",
+          "why": "Se quedan como obsoletas 480 s, por si acaso, y luego se van."
+        },
+        "contiguous": {
+          "q": "¿Puede un merge juntar dos parts que tienen otra en medio?",
+          "no": "No, solo parts contiguas",
+          "yes": "Sí",
+          "night": "Solo de noche",
+          "why": "No: los merges toman parts consecutivas de una partición."
+        },
+        "optimize": {
+          "q": "¿Qué dispara los merges?",
+          "auto": "ClickHouse, continuamente en segundo plano",
+          "optimize": "Ejecutar OPTIMIZE TABLE",
+          "restart": "Reiniciar el servidor",
+          "why": "Son automáticos. OPTIMIZE … FINAL existe, pero casi nunca hace falta (y es caro)."
+        }
+      }
+    },
+    "2-3": {
+      "title": "Too many parts",
+      "summary": "Insertar fila a fila crea parts más rápido de lo que los merges las fusionan.",
+      "brief": {
+        "title": "La hora punta",
+        "body": "Una app manda <b>un pedido por INSERT</b>, varias veces por segundo. Cada insert es una part, y la prensa solo puede fusionar tan rápido. En ClickHouse real, cuando una partición tiene <b>1000</b> parts activas los inserts se frenan, y con <b>3000</b> se rechazan: <code>Too many parts</code>. Este almacén es pequeño, así que aquí los límites son <b>5</b> y <b>15</b>."
+      },
+      "rush": {
+        "title": "Aguanta la hora punta",
+        "body": "Mantén el almacén por debajo de la línea de frenado 8 segundos seguidos. La app manda inserts diminutos; la prensa ya trabaja a tope. ¿Qué puedes cambiar?",
+        "setting": "Cada INSERT lleva:",
+        "success": "Lo lograron los lotes: menos inserts y más grandes, y la prensa da abasto. La recomendación es 10 000–100 000 filas por INSERT y más o menos un INSERT por segundo."
+      },
+      "batch": {
+        "single": "1 fila",
+        "batch": "10 000 filas"
+      },
+      "math": {
+        "q": "Una app manda 50 inserts de una fila por segundo y los merges quitan 40 parts por segundo. Empezando en 0, ¿cuántos segundos hasta el límite real de 3000 parts?",
+        "why": "Las parts crecen 50 − 40 = 10 por segundo: 3000 / 10 = 300 segundos. Cinco minutos y los inserts empiezan a fallar."
+      },
+      "real": {
+        "title": "El arreglo de verdad",
+        "body": "No subas el límite: arregla la causa. Agrupa tus inserts en lotes, o deja que el servidor los agrupe por ti con async inserts (siguiente nivel)."
+      },
+      "check": {
+        "limits": {
+          "q": "En ClickHouse real, ¿con cuántas parts activas por partición frena y luego rechaza inserts?",
+          "l1000": "1000 y 3000",
+          "l100": "100 y 300",
+          "l10k": "10 000 y 30 000",
+          "why": "parts_to_delay_insert = 1000 y parts_to_throw_insert = 3000 (antes de 23.6 era 300)."
+        },
+        "scope": {
+          "q": "Esos límites cuentan parts…",
+          "partition": "por partición",
+          "table": "en toda la tabla",
+          "server": "en todo el servidor",
+          "why": "Por partición (más un tope de 100 000 parts por tabla)."
+        },
+        "fix": {
+          "q": "Te sale “Too many parts”. ¿Cuál es el arreglo correcto?",
+          "batch": "Inserts más grandes y menos frecuentes (o async inserts)",
+          "raise": "Subir parts_to_throw_insert",
+          "partitions": "Añadir más particiones",
+          "why": "Los lotes. Subir el límite esconde el problema, y más particiones lo empeoran."
+        },
+        "time": {
+          "q": "{ins} inserts de una fila por segundo, los merges quitan {mer} parts por segundo. ¿Segundos hasta 3000 parts?",
+          "why": "{ins} − {mer} = {net} parts por segundo → 3000 / {net} ≈ {s} s."
+        }
+      }
+    },
+    "2-4": {
+      "title": "Lotes y async inserts",
+      "summary": "El servidor puede agrupar por ti los inserts pequeños.",
+      "brief": {
+        "title": "Deja que el servidor agrupe",
+        "body": "A veces no puedes agrupar: cientos de clientes pequeños mandan una fila cada uno. Con <b>async inserts</b> el servidor guarda esas filas en un <b>buffer</b> y escribe una part cuando se cumple el primer límite: <b>200 ms</b> (adaptativo), <b>10 MiB</b> o <b>450</b> consultas. Desde la <b>26.2</b> viene activado por defecto (<code>async_insert = 1</code>). En este almacén el tiempo va más lento: el buffer se vacía cada 2 segundos."
+      },
+      "clients": {
+        "title": "Un enjambre de clientes",
+        "body": "Cientos de clientes, un insert diminuto cada uno. Mantén el almacén por debajo de la línea de frenado 8 segundos seguidos.",
+        "setting": "async_insert:",
+        "success": "La tolva juntó las filas y soltó una part cada vez. Los mismos datos, una fracción de las parts."
+      },
+      "async": {
+        "false": "0 (apagado)",
+        "true": "1 (encendido)"
+      },
+      "rate": {
+        "q": "200 inserts de una fila por segundo, con async inserts que vacían el buffer cada 200 ms. ¿Cuántas parts por segundo?",
+        "why": "Una part por vaciado: 1000 ms / 200 ms = 5 parts por segundo, en vez de 200."
+      },
+      "fire": {
+        "q": "Alguien pone <code>wait_for_async_insert = 0</code> para ir más rápido. ¿Qué arriesga?",
+        "lost": "El cliente nunca sabe si el vaciado falló: los errores solo llegan a los logs del servidor",
+        "faster": "Nada, solo va más rápido",
+        "nothing": "El buffer se hace más grande",
+        "why": "Es dispara-y-olvida: si el vaciado falla, el cliente ya recibió un OK. La documentación recomienda <code>async_insert = 1</code> con <code>wait_for_async_insert = 1</code>."
+      },
+      "real": {
+        "title": "Los ajustes reales",
+        "body": "Estos son los valores por defecto desde la 26.2. ClickHouse Cloud usa un buffer más grande (100 MiB) y un tiempo de espera mayor."
+      },
+      "check": {
+        "default": {
+          "q": "Desde ClickHouse 26.2, los async inserts vienen…",
+          "on": "activados por defecto",
+          "off": "desactivados por defecto",
+          "cloud": "solo en Cloud",
+          "why": "Activados: async_insert = 1 por defecto desde 26.2 (algunas páginas de la documentación aún dicen lo contrario)."
+        },
+        "first": {
+          "q": "Los clientes mandan inserts de 1 KB, 100 por segundo. ¿Qué límite de vaciado se cumple primero?",
+          "time": "El tiempo (~200 ms)",
+          "size": "Los 10 MiB",
+          "count": "Las 450 consultas",
+          "why": "El tiempo: en 200 ms llegan unos 20 inserts (20 KB), lejos de 10 MiB o 450 consultas."
+        },
+        "wait": {
+          "q": "¿Qué peligro tiene wait_for_async_insert = 0?",
+          "lost": "El cliente no se entera de los errores",
+          "slow": "Los inserts van más lentos",
+          "nothing": "Ninguno",
+          "why": "Dispara-y-olvida: un vaciado fallido solo aparece en los logs del servidor."
+        },
+        "batch": {
+          "q": "¿Tamaño de lote recomendado para inserts síncronos?",
+          "b10k": "10 000–100 000 filas",
+          "b1": "1 fila",
+          "b10m": "10 millones de filas",
+          "why": "10k–100k filas por INSERT, más o menos un INSERT por segundo."
+        }
+      }
+    },
+    "2-5": {
+      "title": "Caso: el camión que repite",
+      "summary": "La deduplicación de inserts descarta un bloque reintentado.",
+      "brief": {
+        "title": "¡Caso nuevo!",
+        "body": "Un cliente jura que mandó un bloque de pedidos <b>una sola vez</b>. La red falló antes de que llegara el OK, así que su programa <b>reintentó</b>. ¿Saldrán los pedidos duplicados? ClickHouse guarda un hash de cada <b>bloque</b> insertado: si vuelve exactamente el mismo bloque dentro de la ventana, se ignora. Las tablas replicadas y Cloud lo hacen por defecto; un MergeTree normal solo si configuras <code>non_replicated_deduplication_window</code>. Nuestro almacén lo tiene activado."
+      },
+      "retry": {
+        "title": "Reintenta la entrega",
+        "body": "Manda el bloque B-17 y luego reintenta exactamente el mismo. Mira qué hace el muelle con el segundo camión.",
+        "send17": "Enviar bloque B-17",
+        "retry17": "Reintentar B-17",
+        "send18": "Enviar bloque B-18",
+        "success": "El reintento fue rechazado: mismo bloque, mismo hash. Los reintentos seguros son la razón de ser de la deduplicación."
+      },
+      "changed": {
+        "q": "¡Objeción! El cliente cambia un pedido dentro de B-17 y reintenta. ¿Qué pasa?",
+        "inserted": "Se inserta: un bloque distinto tiene otro hash",
+        "dropped": "Se descarta como duplicado",
+        "merged": "Sustituye al primer B-17",
+        "why": "Se inserta, porque la deduplicación compara bloques enteros. Ahora los pedidos que no cambiaron están dos veces. Reintenta el mismo bloque exacto, o usa un <code>insert_deduplication_token</code>."
+      },
+      "diagnose": {
+        "q": "Segundo testigo: una app de dashboards inserta fila a fila y las parts no paran de crecer. ¿Tu veredicto?",
+        "async": "Activar async inserts o agrupar las filas",
+        "raise": "Subir parts_to_throw_insert",
+        "partition": "Particionar por día",
+        "why": "Agrupar (el cliente o el servidor). Subir el límite o particionar más solo lo empeora."
+      },
+      "verdict": {
+        "q": "Pregunta final: dos INSERT distintos contienen cada uno el pedido 4200. ¿Cuántas copias quedan en la tabla?",
+        "both": "Las dos copias",
+        "one": "Una: la primary key es única",
+        "error": "El segundo INSERT falla",
+        "why": "Las dos. La deduplicación es por bloque, no por clave, y la primary key no es única (mundo 3). Quitar filas duplicadas es otra herramienta: ReplacingMergeTree."
+      },
+      "check": {
+        "what": {
+          "q": "La deduplicación de inserts compara…",
+          "block": "el hash del bloque insertado entero",
+          "row": "cada fila",
+          "key": "la primary key",
+          "why": "El hash del bloque: hace seguros los reintentos, no deduplica filas."
+        },
+        "window": {
+          "q": "¿Ventana de deduplicación replicada por defecto?",
+          "w10k": "Los últimos 10 000 bloques, hasta 1 hora",
+          "w100": "Los últimos 100 bloques",
+          "forever": "Para siempre",
+          "why": "replicated_deduplication_window = 10 000 bloques y …_seconds = 3600 (valores actuales)."
+        },
+        "plain": {
+          "q": "En un MergeTree normal (no replicado), la deduplicación de inserts viene…",
+          "off": "apagada (ventana 0)",
+          "on": "encendida",
+          "async": "solo para async inserts",
+          "why": "Apagada: non_replicated_deduplication_window = 0 salvo que lo configures."
+        },
+        "notUnique": {
+          "q": "Dos bloques distintos contienen el mismo pedido. ¿Resultado?",
+          "both": "Se guardan las dos filas",
+          "one": "Una fila",
+          "error": "Un error",
+          "why": "Las dos: bloques distintos tienen hashes distintos."
+        }
+      }
+    },
+    "3-1": {
+      "title": "Cajas de 8192",
+      "summary": "El granule: lo mínimo que lee ClickHouse.",
+      "brief": {
+        "title": "Granules",
+        "body": "Dentro de cada part, las filas están <b>ordenadas por el ORDER BY</b> y cortadas en <b>granules</b> de hasta <b>8192 filas</b> (<code>index_granularity</code>). Una caja es un granule de una columna. ClickHouse nunca lee una fila suelta: lo mínimo que lee es un granule entero.",
+        "breaks": "8192 es un máximo: con filas muy anchas un granule puede tener menos (index_granularity_bytes = 10 MiB)."
+      },
+      "map": {
+        "box": "Una caja",
+        "granule": "un granule (≤ 8192 filas de una columna)",
+        "order": "Cajas en orden",
+        "orderBy": "filas ordenadas por ORDER BY dentro de la part"
+      },
+      "count": {
+        "q": "Una part tiene 100 000 filas. ¿Cuántos granules?",
+        "why": "100 000 / 8192 = 12,2 → 13 granules (el último va a medio llenar)."
+      },
+      "oneRow": {
+        "q": "<code>WHERE customer_id = 4200</code> encuentra un solo pedido. ¿Cuántas filas lee ClickHouse como mínimo?",
+        "one": "1",
+        "granule": "Un granule entero (hasta 8192)",
+        "all": "Todas las filas",
+        "why": "Un granule entero: el índice apunta a granules, no a filas. Es el precio de un índice diminuto."
+      },
+      "find": {
+        "title": "Encuentra al cliente 777",
+        "body": "La consulta ya filtra <code>WHERE customer_id = 777</code>. Elige su columna y ejecútala: Pico debería abrir un solo granule por columna.",
+        "success": "Un granule: la tabla está ordenada por customer_id, así que el índice sabía exactamente dónde mirar."
+      },
+      "check": {
+        "count": {
+          "q": "¿Cuántos granules para {rows} filas?",
+          "why": "{rows} / 8192, redondeando hacia arriba = {n}."
+        },
+        "unit": {
+          "q": "¿Cuál es la unidad mínima que lee ClickHouse?",
+          "granule": "Un granule",
+          "row": "Una fila",
+          "part": "Una part entera",
+          "why": "Un granule (de cada columna que necesita)."
+        },
+        "size": {
+          "q": "¿index_granularity por defecto?",
+          "g8192": "8192 filas",
+          "g1024": "1024 filas",
+          "g65536": "65 536 filas",
+          "why": "8192 filas (con tope de 10 MiB por granule)."
+        },
+        "sorted": {
+          "q": "Las filas están ordenadas por ORDER BY…",
+          "part": "dentro de cada part",
+          "table": "en toda la tabla",
+          "never": "nunca",
+          "why": "Dentro de cada part. Parts distintas se solapan hasta que se fusionan."
+        }
+      }
+    },
+    "3-2": {
+      "title": "El tablero de la entrada",
+      "summary": "Un índice disperso: una entrada por granule.",
+      "brief": {
+        "title": "El índice disperso",
+        "body": "A la entrada hay un tablero: <code>primary.idx</code>. Tiene <b>una entrada por granule</b>: la clave de la primera fila del granule. Es diminuto (la tabla de la documentación: 8,87 millones de filas, 1083 entradas, 97 KiB), así que vive en memoria. Para encontrar una clave, ClickHouse hace una <b>búsqueda binaria</b> en el tablero y lee solo los granules que pueden contenerla."
+      },
+      "search": {
+        "title": "Buscando un cliente",
+        "body": "Mira el tablero de la derecha: para el cliente 5100 solo una entrada puede coincidir, y Pico va directo a esa caja."
+      },
+      "entries": {
+        "q": "Una part tiene 1083 granules. ¿Cuántas entradas tiene su primary.idx?",
+        "why": "1083: una por granule. Por eso se llama disperso."
+      },
+      "holds": {
+        "q": "¿Qué guarda el índice primario?",
+        "first": "Los valores de la clave de la primera fila de cada granule",
+        "every": "La clave de cada fila",
+        "offsets": "Posiciones en bytes dentro de los archivos de columna",
+        "why": "La primera clave de cada granule. Las posiciones viven en los archivos de <b>marcas</b> (uno por columna), que dicen dónde empieza cada granule."
+      },
+      "lean": {
+        "title": "La búsqueda más ligera",
+        "body": "Lee solo el total del cliente 3100. Apunta al mínimo: un granule de la columna del filtro más uno de total.",
+        "success": "2 cajas de 72: la columna del filtro (para comprobar) y total (la respuesta)."
+      },
+      "check": {
+        "entries": {
+          "q": "El índice primario tiene una entrada por…",
+          "granule": "granule",
+          "row": "fila",
+          "part": "part",
+          "why": "Granule: disperso, pequeño, en memoria."
+        },
+        "marks": {
+          "q": "¿Qué guardan los archivos de marcas?",
+          "offsets": "Dónde empieza cada granule en un archivo de columna",
+          "keys": "Valores de la clave",
+          "rows": "Números de fila",
+          "why": "Posiciones (bloque comprimido y posición dentro) para saltar directo al granule N."
+        },
+        "size": {
+          "q": "Una part tiene {g} granules. ¿Cuántas entradas en el índice primario?",
+          "why": "{g}, una por granule."
+        },
+        "memory": {
+          "q": "¿Dónde vive el índice primario?",
+          "memory": "En memoria (es diminuto)",
+          "disk": "Solo en disco",
+          "never": "No se guarda",
+          "why": "En memoria (cargado bajo demanda desde 24.2): unos pocos KiB por millón de filas."
+        }
+      }
+    },
+    "3-3": {
+      "title": "El segundo de la fila",
+      "summary": "El orden de las columnas de la clave decide qué se puede saltar.",
+      "brief": {
+        "title": "Dos columnas en la clave",
+        "body": "Con <code>ORDER BY (a, b)</code> los datos se ordenan por <code>a</code>, y por <code>b</code> solo dentro de cada valor de <code>a</code>. Un filtro sobre <code>a</code> usa búsqueda binaria. Un filtro sobre <code>b</code> solo puede saltarse un granule si <code>a</code> es <b>constante</b> dentro de él. En la documentación: primera columna → 1 de 1083 granules; segunda columna → 1076 de 1083. Por eso va primero la columna de <b>baja cardinalidad</b>."
+      },
+      "cityFirst": {
+        "q": "<code>ORDER BY (customer_id, city)</code>: ¿cuántos de los 24 granules lee <code>WHERE city = 'Lima''</code>?",
+        "why": "Los 24: cada granule mezcla muchos clientes, así que city toma todos los valores en todos los granules. El índice no puede descartar nada."
+      },
+      "swap": {
+        "q": "Los mismos datos con <code>ORDER BY (city, customer_id)</code>. ¿Cuántos granules ahora?",
+        "why": "4: todas las Limas están juntas, así que solo se leen los granules de Lima."
+      },
+      "daily": {
+        "title": "Los informes diarios",
+        "body": "Dos informes corren cada día: uno por ciudad y otro por cliente. Elige la clave y ejecuta los dos: entre ambos deben leer <b>10 granules o menos</b>.",
+        "qa": "Informe A: city = 'Lima'",
+        "qb": "Informe B: customer_id = 4200",
+        "success": "Ciudad primero: 4 + 6 = 10 granules. Cliente primero serían 24 + 1 = 25. Baja cardinalidad primero ayuda también a la segunda columna."
+      },
+      "check": {
+        "rule": {
+          "q": "¿Qué columna suele ir primero en el ORDER BY?",
+          "low": "La que tiene menos valores distintos",
+          "high": "La más selectiva",
+          "alpha": "Por orden alfabético",
+          "why": "Baja cardinalidad primero: deja podar a las columnas siguientes y comprime mejor."
+        },
+        "docs": {
+          "q": "Documentación: 1/1083 granules con un filtro, 1076/1083 con otro. ¿Cuál filtraba la segunda columna de la clave?",
+          "second": "El de 1076/1083",
+          "first": "El de 1/1083",
+          "both": "Los dos igual",
+          "why": "La segunda columna apenas poda cuando la primera tiene cardinalidad alta."
+        },
+        "when": {
+          "q": "¿Cuándo puede un filtro sobre la 2.ª columna de la clave saltarse un granule?",
+          "constant": "Cuando la 1.ª columna es constante dentro de él",
+          "always": "Siempre",
+          "never": "Nunca",
+          "why": "Solo entonces el rango de la 2.ª columna en ese granule significa algo (exclusión genérica)."
+        },
+        "notInKey": {
+          "q": "Un filtro sobre una columna que no está en la clave lee…",
+          "all": "todos los granules (de las columnas que necesita)",
+          "half": "la mitad",
+          "none": "ninguno",
+          "why": "El índice primario no ayuda; un skip index podría (mundo 7)."
+        }
+      }
+    },
+    "3-4": {
+      "title": "La clave no es única",
+      "summary": "PRIMARY KEY ordena e indexa; no prohíbe duplicados.",
+      "brief": {
+        "title": "No es una regla de unicidad",
+        "body": "En Postgres una primary key es única. En ClickHouse no: <code>PRIMARY KEY</code> solo decide qué entra en el índice disperso. Por defecto es el ORDER BY; si la defines, tiene que ser un <b>prefijo</b> del ORDER BY. Dos filas con la misma clave conviven tan tranquilas."
+      },
+      "twice": {
+        "q": "Insertas otro lote que también trae pedidos del cliente 4200 (misma clave). ¿Cuántas parts tienen al cliente 4200 ahora?",
+        "two": "Dos: se guardan las dos filas",
+        "one": "Una: la fila vieja se sustituye",
+        "error": "El insert falla",
+        "why": "Dos. Nadie comprueba la unicidad; la part nueva simplemente tiene su propia copia."
+      },
+      "both": {
+        "title": "Encuentra las dos copias",
+        "body": "Lee al cliente 4200: Pico tiene que visitar las dos secciones.",
+        "success": "Un granule en cada part. Quitar duplicados es trabajo de ReplacingMergeTree (un mundo posterior)."
+      },
+      "prefix": {
+        "q": "¿Es válida esta tabla?",
+        "valid": "Válida",
+        "invalid": "No válida",
+        "why": "No válida: PRIMARY KEY tiene que ser un prefijo del ORDER BY, así que podría ser <code>city</code> o <code>(city, customer_id)</code>, pero no <code>customer_id</code>."
+      },
+      "real": {
+        "title": "PRIMARY KEY frente a ORDER BY",
+        "body": "Una PRIMARY KEY más corta hace el índice más pequeño mientras los datos siguen ordenados por el ORDER BY completo."
+      },
+      "check": {
+        "unique": {
+          "q": "¿Impone unicidad la PRIMARY KEY de ClickHouse?",
+          "no": "No",
+          "yes": "Sí",
+          "replicated": "Solo en tablas replicadas",
+          "why": "No. Es una decisión de orden e índice."
+        },
+        "prefix": {
+          "q": "Si defines PRIMARY KEY aparte, tiene que ser…",
+          "prefix": "un prefijo del ORDER BY",
+          "any": "cualquier columna",
+          "same": "distinta del ORDER BY",
+          "why": "Un prefijo del ORDER BY."
+        },
+        "count": {
+          "q": "Insertas el mismo pedido {n} veces en {n} INSERT. ¿Cuántas filas coinciden con su clave?",
+          "why": "{n}: en un MergeTree normal nada deduplica por clave."
+        },
+        "dedupe": {
+          "q": "¿Qué herramienta quita filas duplicadas por clave (con el tiempo)?",
+          "replacing": "ReplacingMergeTree",
+          "pk": "La PRIMARY KEY",
+          "index": "Un skip index",
+          "why": "ReplacingMergeTree, durante los merges."
+        }
+      }
+    },
+    "3-5": {
+      "title": "Caso EXPLAIN",
+      "summary": "Lee el embudo y elige la clave para una carga real.",
+      "brief": {
+        "title": "El dashboard lento",
+        "body": "Caso nuevo: el dashboard va lento. Tu prueba es <code>EXPLAIN indexes = 1</code>: para cada etapa de índice muestra las <b>Parts</b> y los <b>Granules</b> seleccionados del total. Menos granules, menos trabajo."
+      },
+      "limit": {
+        "q": "Prueba A: <code>SELECT * … ORDER BY total DESC LIMIT 1</code>. ¿Cuántos de los 24 granules se leen?",
+        "why": "Los 24: total no está en la clave, así que la única forma de encontrar el mayor es mirarlos todos. LIMIT no acorta el escaneo (la lazy materialization solo retrasa las demás columnas)."
+      },
+      "fix": {
+        "title": "Arregla el dashboard",
+        "body": "Tres consultas del dashboard. Elige la clave, ejecuta las tres y mira EXPLAIN: entre las tres deben leer <b>14 granules o menos</b>.",
+        "q1": "C1: city = 'Quito'",
+        "q2": "C2: city = 'Lima'",
+        "q3": "C3: customer_id = 9100",
+        "success": "Ciudad primero: 4 + 4 + 6 = 14. Cliente primero: 24 + 24 + 1. ¡Caso cerrado!"
+      },
+      "check": {
+        "read": {
+          "q": "EXPLAIN dice <code>Granules: {sel}/{total}</code>. ¿Qué porcentaje se lee?",
+          "why": "{sel} / {total} ≈ {pct}%."
+        },
+        "limit": {
+          "q": "ORDER BY por una columna fuera de la clave con LIMIT 1 lee…",
+          "all": "todos los granules",
+          "one": "un granule",
+          "half": "la mitad",
+          "why": "Todo: para saber cuál es la primera fila tiene que verlas todas."
+        },
+        "pick": {
+          "q": "Casi todas las consultas filtran por ciudad y algunas por cliente. ¿Mejor ORDER BY?",
+          "cityFirst": "(city, customer_id)",
+          "custFirst": "(customer_id, city)",
+          "total": "(total)",
+          "why": "Ciudad primero: baja cardinalidad, y el cliente sigue podando dentro de cada ciudad."
+        },
+        "stage": {
+          "q": "¿Qué etapa de EXPLAIN muestra el índice disperso trabajando?",
+          "pk": "PrimaryKey",
+          "partition": "Partition",
+          "skip": "Skip",
+          "why": "PrimaryKey (Partition es la poda por partición, Skip son los skip indexes)."
+        }
+      }
+    },
+    "4-1": {
+      "title": "Naves separadas",
+      "summary": "Particiones: naves separadas que nunca se mezclan.",
+      "brief": {
+        "title": "PARTITION BY",
+        "body": "Con <code>PARTITION BY toYYYYMM(date)</code> cada mes tiene su propia <b>nave</b>. Cada part pertenece a una partición, los merges <b>nunca cruzan</b> particiones, y un INSERT que abarca varios meses crea una part por mes. Cada part recuerda además el mínimo y el máximo de la clave de partición, así que un filtro por fecha puede saltarse parts enteras.",
+        "breaks": "Una partición no es un edificio: es una etiqueta en cada part. Las naves solo muestran qué parts la comparten."
+      },
+      "map": {
+        "hall": "Una nave",
+        "partition": "una partición (un mes)"
+      },
+      "split": {
+        "title": "Un insert entre meses",
+        "body": "Llega un INSERT con pedidos de septiembre y de octubre. Mira cómo se parte en dos parts, una por nave."
+      },
+      "three": {
+        "q": "Un INSERT trae pedidos de 3 meses distintos. ¿Cuántas parts crea?",
+        "why": "3: una por cada partición que toca."
+      },
+      "cross": {
+        "q": "¿Podría la prensa fusionar una part de agosto con una de septiembre?",
+        "no": "No: los merges se quedan dentro de una partición",
+        "yes": "Sí, si son vecinas",
+        "why": "No. Los merges solo juntan parts de la misma partición. Mira cómo se fusionan entre sí las dos parts de agosto."
+      },
+      "sept": {
+        "title": "El informe de agosto",
+        "body": "El informe filtra por agosto. Elige la columna y ejecútalo: las demás naves se deberían saltar enteras.",
+        "success": "EXPLAIN lo muestra: etapa Partition, 1 part de 5. Los otros meses ni se abrieron."
+      },
+      "check": {
+        "parts": {
+          "q": "Un INSERT trae filas de {n} meses (particiones mensuales). ¿Cuántas parts?",
+          "why": "{n}, una por partición."
+        },
+        "merge": {
+          "q": "¿Se fusionan alguna vez parts de particiones distintas?",
+          "never": "Nunca",
+          "night": "De noche",
+          "optimize": "Con OPTIMIZE",
+          "why": "Nunca: cada partición se fusiona por su cuenta."
+        },
+        "prune": {
+          "q": "¿Cómo se salta parts la poda por partición?",
+          "minmax": "Con el mínimo y máximo de la clave de partición de cada part",
+          "name": "Solo si la consulta nombra el ID de la partición",
+          "scan": "Lo lee todo",
+          "why": "minmax_*.idx en cada part: sirve cualquier filtro sobre las columnas de la clave."
+        },
+        "purpose": {
+          "q": "¿Para qué sirven sobre todo las particiones?",
+          "manage": "Para gestionar datos (borrar, mover, TTL)",
+          "speed": "Para acelerar consultas",
+          "unique": "Para imponer unicidad",
+          "why": "Gestión de datos. La velocidad viene del ORDER BY."
+        }
+      }
+    },
+    "4-2": {
+      "title": "Particionar no acelera",
+      "summary": "La velocidad de las consultas viene del ORDER BY.",
+      "brief": {
+        "title": "Una confusión típica",
+        "body": "Mucha gente particiona para que las consultas vayan rápido. La documentación es tajante: <b>particionar no acelera las consultas</b>, lo hace el ORDER BY. La poda por partición solo ayuda a las consultas que filtran por la clave de partición. Aquí la tabla está particionada por mes y ordenada por fecha."
+      },
+      "customer": {
+        "q": "8 granules repartidos en 4 meses. ¿Cuántos lee <code>WHERE customer_id = 4200</code>?",
+        "why": "Los 8: las particiones son por mes y el orden por fecha, así que nada le dice a ClickHouse dónde está el cliente 4200."
+      },
+      "fix": {
+        "title": "Acelera la consulta de clientes",
+        "body": "Deja las particiones mensuales. Cambia lo que de verdad importa y ejecuta la consulta del cliente: lee <b>4 granules o menos</b>.",
+        "run": "Ejecutar: customer_id = 4200",
+        "success": "ORDER BY customer_id: un granule por mes. Mismas particiones, la cuarta parte de lectura."
+      },
+      "check": {
+        "speed": {
+          "q": "¿Qué hace rápida una consulta con filtro?",
+          "orderBy": "Un ORDER BY que encaje con el filtro",
+          "partition": "Más particiones",
+          "both": "Las particiones, siempre",
+          "why": "El ORDER BY (y el índice disperso sobre él)."
+        },
+        "whenHelps": {
+          "q": "La poda por partición ayuda a…",
+          "partitionKey": "las consultas que filtran por la clave de partición",
+          "anyFilter": "cualquier filtro",
+          "never": "nada",
+          "why": "Solo a las consultas que filtran por las columnas de la clave de partición."
+        },
+        "need": {
+          "q": "¿Qué aconseja la documentación sobre la clave de partición?",
+          "often": "Muchas veces no hace falta; si es por tiempo, mensual",
+          "always": "Particionar siempre por día",
+          "pk": "Particionar por la primary key",
+          "why": "“En la mayoría de los casos no necesitas clave de partición.” Si la necesitas, mensual."
+        },
+        "months": {
+          "q": "Particiones mensuales, consulta de un cliente sin filtro de fecha, datos de {months} meses. ¿Cuántas particiones se recorren?",
+          "why": "{months}: sin filtro de fecha, todas."
+        }
+      }
+    },
+    "4-3": {
+      "title": "Demasiadas naves",
+      "summary": "Particiones demasiado finas multiplican las parts y chocan con los límites.",
+      "brief": {
+        "title": "¿Día? ¿Cliente? ¿Mes?",
+        "body": "Un INSERT crea una part por cada partición que toca. Particiona por día y una semana de pedidos son 7 parts; particiona por cliente y un solo INSERT puede tocar cientos de particiones. ClickHouse rechaza un INSERT que toque más de <b>100</b> (<code>max_partitions_per_insert_block</code>). Mantén el total en unos pocos miles como mucho."
+      },
+      "pick": {
+        "title": "Elige la clave de partición",
+        "body": "Inserta una semana de pedidos con cada clave. Primero consigue que rechacen un INSERT, luego vacía el almacén y termina con una clave que deje 2 parts o menos.",
+        "day": "Una semana, PARTITION BY día",
+        "customer": "Una semana, PARTITION BY cliente",
+        "month": "Una semana, PARTITION BY mes",
+        "truncate": "Vaciar el almacén",
+        "success": "Mensual: una semana, una part. Por día: 7 parts por insert. Por cliente: rechazado por tocar 480 particiones."
+      },
+      "error": {
+        "q": "¿Qué límite rechazó el INSERT particionado por cliente?",
+        "partitions": "Demasiadas particiones para un solo bloque de INSERT (más de 100)",
+        "parts": "Too many parts",
+        "memory": "El límite de memoria",
+        "why": "max_partitions_per_insert_block = 100: un bloque no puede repartirse en más particiones que eso."
+      },
+      "check": {
+        "limit": {
+          "q": "max_partitions_per_insert_block vale por defecto…",
+          "l100": "100",
+          "l1000": "1000",
+          "none": "sin límite",
+          "why": "100."
+        },
+        "key": {
+          "q": "¿Clave de partición por tiempo para la mayoría de las tablas?",
+          "month": "Mes: toYYYYMM(date)",
+          "day": "Día",
+          "customer": "Id de cliente",
+          "why": "Mensual, si hace falta alguna."
+        },
+        "days": {
+          "q": "Particionado por día: un INSERT trae pedidos de {days} días. ¿Cuántas parts?",
+          "why": "{days}, una por día que toca."
+        },
+        "total": {
+          "q": "¿Cuántas particiones debería tener una tabla como mucho?",
+          "thousands": "Menos de unas 1000–10 000",
+          "millions": "Millones está bien",
+          "unlimited": "Las que quieras",
+          "why": "Por debajo de ~1000–10 000: cada partición multiplica parts y merges."
+        }
+      }
+    },
+    "4-4": {
+      "title": "Caso: borrar septiembre",
+      "summary": "DROP PARTITION, DELETE ligero y mutaciones: tres costes muy distintos.",
+      "brief": {
+        "title": "Una petición de olvido",
+        "body": "Último caso del mundo: el departamento legal pide borrar todos los pedidos de un mes. Hay tres formas. <code>ALTER TABLE … DELETE</code> es una <b>mutación</b>: reescribe todas las parts afectadas. <code>DELETE FROM</code> es <b>ligero</b>: marca las filas, y el espacio lo liberan merges posteriores. <code>DROP PARTITION</code> quita la partición entera de golpe, como metadatos."
+      },
+      "guess": {
+        "q": "¿Cuál es la más barata para borrar un mes entero?",
+        "drop": "ALTER TABLE … DROP PARTITION",
+        "lightweight": "DELETE FROM … WHERE",
+        "mutation": "ALTER TABLE … DELETE WHERE",
+        "why": "DROP PARTITION: no lee ni reescribe datos. Por eso el PARTITION BY se diseña según cómo vas a borrar."
+      },
+      "compare": {
+        "title": "Prueba las tres",
+        "body": "Borra cada mes con un método distinto y compara: agosto con una mutación, septiembre con DROP PARTITION y octubre con un DELETE ligero.",
+        "mutation": "Agosto: ALTER … DELETE",
+        "lightweight": "Octubre: DELETE FROM",
+        "drop": "Septiembre: DROP PARTITION",
+        "success": "La mutación reescribió caja tras caja. DROP PARTITION fue instantáneo. El DELETE ligero marcó octubre, pero sus cajas siguen ocupando sitio hasta un merge."
+      },
+      "real": {
+        "title": "Los comandos reales",
+        "body": "Las mutaciones corren de forma asíncrona (míralas en <code>system.mutations</code>). El DELETE ligero es estable (GA) desde la 23.3."
+      },
+      "check": {
+        "cheapest": {
+          "q": "¿Forma más barata de borrar un mes entero (particiones mensuales)?",
+          "drop": "DROP PARTITION",
+          "lightweight": "DELETE FROM",
+          "mutation": "ALTER TABLE … DELETE",
+          "why": "DROP PARTITION, una operación de metadatos."
+        },
+        "mutation": {
+          "q": "¿Qué hace ALTER TABLE … DELETE con las parts?",
+          "rewrite": "Reescribe todas las parts afectadas",
+          "mask": "Marca las filas",
+          "metadata": "Solo cambia metadatos",
+          "why": "Reescribe parts enteras, de forma asíncrona: pesado."
+        },
+        "space": {
+          "q": "Tras un DELETE ligero, ¿cuándo se libera el espacio en disco?",
+          "merge": "Cuando merges posteriores reescriben esas parts",
+          "instant": "Al instante",
+          "never": "Nunca",
+          "why": "Las filas se ocultan al momento y las quitan los merges."
+        },
+        "design": {
+          "q": "Tienes que borrar datos mes a mes. ¿Qué PARTITION BY ayuda más?",
+          "month": "Por mes",
+          "customer": "Por cliente",
+          "none": "Sin clave de partición",
+          "why": "Por mes: cada borrado se convierte en un DROP PARTITION."
+        }
+      }
     }
   },
   "map": {
@@ -350,6 +1151,9 @@
     "w4": {
       "title": "Particiones",
       "body": "Naves separadas para gestionar datos: la poda, por qué particionar no acelera consultas y el borrado más barato que existe."
+    },
+    "shift": {
+      "title": "Turno de mañana"
     }
   },
   "code": {
@@ -370,5 +1174,22 @@
     "credits": "Arte 3D: Kenney (CC0). Música y sonidos generados en código. Créditos completos en",
     "madeBy": "Hecho por",
     "github": "Código fuente en GitHub"
+  },
+  "review": {
+    "title": "Turno de mañana",
+    "back": "Volver al mapa",
+    "map": "Mapa del mundo",
+    "streak": "{n, plural, =0 {Empieza una racha hoy} one {Racha de # día} other {Racha de # días}}",
+    "done": "¡Turno terminado!",
+    "score": "Recordaste {correct} de {total}. Los conceptos que fallaste volverán antes.",
+    "emptyTitle": "Aún no hay nada que repasar",
+    "emptyBody": "Termina tu primer nivel y sus conceptos empezarán a aparecer aquí.",
+    "dueTitle": "{n, plural, one {# concepto} other {# conceptos}} para refrescar",
+    "dueBody": "Unas preguntas rápidas sobre cosas que aprendiste hace un tiempo, mezcladas.",
+    "caughtUp": "¡Todo al día!",
+    "nextOn": "Tu próximo repaso toca el {date}.",
+    "start": "Empezar el turno",
+    "practice": "Practicar los más débiles",
+    "why": "¿Para qué? Recordar algo justo cuando estás a punto de olvidarlo es una de las formas más eficaces de fijarlo (práctica de recuperación espaciada)."
   }
 }

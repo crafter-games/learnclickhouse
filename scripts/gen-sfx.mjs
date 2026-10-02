@@ -66,6 +66,19 @@ const sfx = {
     });
     return s * (1 - t / 0.6);
   }),
+  // merge: the press comes down — heavy clunk, then a short hiss as parts fuse
+  merge: render(0.55, ({ t, p, osc, noise }) => {
+    const clunk = Math.exp(-t * 22) * (0.8 * osc(90 - 40 * Math.min(1, p * 4)) + 0.4 * noise(0.5));
+    const hiss = t > 0.12 ? Math.exp(-(t - 0.12) * 7) * noise(0.9) * 0.14 : 0;
+    return clunk + hiss;
+  }),
+  // insert rejected (TOO_MANY_PARTS): two low buzzes
+  reject: render(0.45, ({ t, osc }) => {
+    const on = t < 0.18 || (t > 0.24 && t < 0.42);
+    return on ? Math.sign(osc(110)) * 0.16 + osc(220, 1) * 0.08 : 0;
+  }),
+  // parts dropped / truck sent away: a falling whoosh
+  drop: render(0.4, ({ p, osc, noise }) => Math.sin(Math.PI * p) * (0.25 * noise(0.2 + 0.3 * (1 - p)) + 0.12 * osc(600 - 450 * p))),
   // objective complete: rising major arpeggio sparkle (A C# E A)
   unlock: render(0.5, ({ t, osc }) => {
     const notes = [880, 1108.7, 1318.5, 1760];

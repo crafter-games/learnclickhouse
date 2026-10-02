@@ -8,6 +8,9 @@ export const SFX = {
   read: "/audio/sfx/read.wav", // a granule is read
   skip: "/audio/sfx/skip.wav", // a granule (or a whole column) is skipped
   done: "/audio/sfx/done.wav", // query finished
+  merge: "/audio/sfx/merge.wav", // background merge (the press)
+  reject: "/audio/sfx/reject.wav", // insert rejected: too many parts / partitions
+  drop: "/audio/sfx/drop.wav", // parts dropped, duplicate sent away
   click: "/audio/sfx/click.wav",
   blip: "/audio/sfx/blip.wav",
   unlock: "/audio/sfx/unlock.wav",

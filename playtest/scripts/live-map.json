@@ -1,0 +1,1 @@
+{ "name": "live-map", "path": "/es/world", "viewport": [1440, 900], "steps": [ { "wait": 5000 }, { "screenshot": "map" }, { "press": "ArrowRight" }, { "wait": 2500 }, { "screenshot": "w2" } ] }

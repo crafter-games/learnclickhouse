@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GRANULE_ROWS, PARTS_TO_DELAY, PARTS_TO_THROW, Table, TooManyPartsError, granulesFor, type TableEvent } from "./table";
+import { GRANULE_ROWS, PARTS_TO_DELAY, PARTS_TO_THROW, Table, TooManyPartitionsError, TooManyPartsError, granulesFor, sortedGranules, type TableEvent } from "./table";
 
 const orders = () =>
   new Table({
@@ -33,9 +33,9 @@ describe("inserts create immutable parts", () => {
     const t = orders();
     const events: TableEvent[] = [];
     t.events.on((e) => events.push(e));
-    expect(t.insert(1000).name).toBe("all_1_1_0");
-    expect(t.insert(1000).name).toBe("all_2_2_0");
-    expect(t.insert(10, { partition: "202609" }).name).toBe("202609_3_3_0");
+    expect(t.insert(1000)!.name).toBe("all_1_1_0");
+    expect(t.insert(1000)!.name).toBe("all_2_2_0");
+    expect(t.insert(10, { partition: "202609" })!.name).toBe("202609_3_3_0");
     expect(events.filter((e) => e.type === "partCreated")).toHaveLength(3);
   });
 
@@ -49,7 +49,7 @@ describe("inserts create immutable parts", () => {
     for (let i = t.activeCount("all"); i < PARTS_TO_THROW; i++) t.insert(1);
     expect(() => t.insert(1)).toThrow(TooManyPartsError);
     // Other partitions have their own count
-    expect(t.insert(1, { partition: "202610" }).name).toMatch(/^202610_/);
+    expect(t.insert(1, { partition: "202610" })!.name).toMatch(/^202610_/);
   });
 });
 
@@ -135,5 +135,111 @@ describe("compression", () => {
     t.setOrderBy(["city"]);
     const after = t.columnSizes().find((c) => c.name === "city")!.compressed;
     expect(before / after).toBeCloseTo(40 / 6);
+  });
+});
+
+describe("background merge selector", () => {
+  it("picks small contiguous parts in one partition", () => {
+    const t = orders();
+    t.insert(GRANULE_ROWS * 10);
+    t.insert(100);
+    t.insert(200);
+    t.insert(GRANULE_ROWS * 5);
+    expect(t.selectMerge()).toEqual(["all_2_2_0", "all_3_3_0"]);
+  });
+  it("never merges across partitions and respects the size cap", () => {
+    const t = new Table({ name: "x", columns: [{ name: "a", type: "", bytesPerRow: 1 }], settings: { maxMergeRows: 150 } });
+    t.insert(100, { partition: "202609" });
+    t.insert(100, { partition: "202610" });
+    expect(t.selectMerge()).toBeNull();
+    t.insert(40, { partition: "202610" });
+    expect(t.selectMerge()).toEqual(["202610_2_2_0", "202610_3_3_0"]);
+  });
+});
+
+describe("scaled thresholds", () => {
+  it("throws TOO_MANY_PARTS at the configured limit", () => {
+    const t = new Table({ name: "x", columns: [{ name: "a", type: "", bytesPerRow: 1 }], settings: { partsToDelay: 3, partsToThrow: 5 } });
+    for (let i = 0; i < 5; i++) t.insert(1);
+    expect(() => t.insert(1)).toThrow(TooManyPartsError);
+  });
+});
+
+describe("insert deduplication", () => {
+  it("drops a retried block with the same token inside the window", () => {
+    const t = new Table({ name: "x", columns: [{ name: "a", type: "", bytesPerRow: 1 }], settings: { dedupWindow: 100 } });
+    expect(t.insert(10, { token: "b1" })).not.toBeNull();
+    expect(t.insert(10, { token: "b1" })).toBeNull();
+    expect(t.insert(10, { token: "b2" })).not.toBeNull();
+    expect(t.activeParts).toHaveLength(2);
+  });
+  it("is off when the window is 0 (plain MergeTree default)", () => {
+    const t = new Table({ name: "x", columns: [{ name: "a", type: "", bytesPerRow: 1 }] });
+    t.insert(10, { token: "b1" });
+    expect(t.insert(10, { token: "b1" })).not.toBeNull();
+  });
+});
+
+describe("multi-column sorting key", () => {
+  const cols = [
+    { name: "city", type: "", bytesPerRow: 1 },
+    { name: "customer_id", type: "", bytesPerRow: 1 },
+    { name: "total", type: "", bytesPerRow: 1 },
+  ];
+  const dist = { city: 6, customer_id: 10000 };
+  const make = (orderBy: string[]) => {
+    const t = new Table({ name: "x", columns: cols, orderBy });
+    t.insert(GRANULE_ROWS * 24, { dist });
+    return t;
+  };
+  it("low-cardinality first lets the second column prune (generic exclusion)", () => {
+    const t = make(["city", "customer_id"]);
+    expect(t.plan({ columns: ["total"], where: { column: "city", min: 2, max: 2 } }).granulesRead).toBe(4);
+    expect(t.plan({ columns: ["total"], where: { column: "customer_id", min: 4200, max: 4200 } }).granulesRead).toBe(6);
+  });
+  it("high-cardinality first: great on its own column, useless for the second", () => {
+    const t = make(["customer_id", "city"]);
+    expect(t.plan({ columns: ["total"], where: { column: "customer_id", min: 4200, max: 4200 } }).granulesRead).toBe(1);
+    expect(t.plan({ columns: ["total"], where: { column: "city", min: 2, max: 2 } }).granulesRead).toBe(24);
+  });
+  it("re-sorts when the ORDER BY changes", () => {
+    const t = make(["customer_id", "city"]);
+    t.setOrderBy(["city", "customer_id"]);
+    expect(t.plan({ columns: ["total"], where: { column: "city", min: 2, max: 2 } }).granulesRead).toBe(4);
+  });
+  it("granule ranges are monotonic on the first key", () => {
+    const gs = sortedGranules(GRANULE_ROWS * 24, ["city", "customer_id"], dist);
+    expect(gs[0].keys!.city).toEqual([0, 0]);
+    expect(gs[23].keys!.city).toEqual([5, 5]);
+  });
+});
+
+describe("partitions", () => {
+  it("one insert block creates one part per partition, up to the limit", () => {
+    const t = new Table({ name: "x", columns: [{ name: "a", type: "", bytesPerRow: 1 }], settings: { maxPartitionsPerInsert: 3 } });
+    expect(t.insertBlock([{ partition: "202609", rows: 10 }, { partition: "202610", rows: 10 }])).toHaveLength(2);
+    expect(() => t.insertBlock(["1", "2", "3", "4"].map((p) => ({ partition: p, rows: 1 })))).toThrow(TooManyPartitionsError);
+  });
+  it("partition pruning skips whole parts and shows in the EXPLAIN funnel", () => {
+    const t = new Table({ name: "x", columns: [{ name: "a", type: "", bytesPerRow: 1 }] });
+    t.insert(GRANULE_ROWS * 2, { partition: "202608" });
+    t.insert(GRANULE_ROWS * 2, { partition: "202609" });
+    t.insert(GRANULE_ROWS * 2, { partition: "202610" });
+    const r = t.plan({ columns: ["a"], partitions: ["202609"] });
+    expect(r.granulesRead).toBe(2);
+    expect(r.explain[0]).toEqual({ stage: "Partition", parts: [1, 3], granules: [2, 6] });
+  });
+  it("DROP PARTITION removes its parts; a mutation rewrites them; lightweight delete masks rows", () => {
+    const t = new Table({ name: "x", columns: [{ name: "a", type: "", bytesPerRow: 1 }] });
+    t.insert(100, { partition: "202609" });
+    t.insert(100, { partition: "202610" });
+    t.insert(100, { partition: "202610" });
+    expect(t.lightweightDelete("202610")).toHaveLength(2);
+    expect(t.merge(["202610_2_2_0", "202610_3_3_0"]).rows).toBe(0);
+    const m = t.mutateDelete("202609");
+    expect(m.bytes).toBe(100);
+    expect(t.partitions).toEqual(["202610"]);
+    t.dropPartition("202610");
+    expect(t.activeParts).toHaveLength(0);
   });
 });

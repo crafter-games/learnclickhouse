@@ -11,11 +11,13 @@ type Props = {
   insets?: { top?: number; right?: number; bottom?: number; left?: number };
   onSound?: StageOptions["onSound"];
   onReady?: (stage: DepotStage) => void;
+  /** Deliver new parts by truck as the table creates them (off when a level session drives the stage). */
+  autoDeliver?: boolean;
   className?: string;
 };
 
 /** Mounts the Three.js warehouse for a table; new parts arrive by truck as the sim emits them. */
-export function DepotCanvas({ table, labels, insets, onSound, onReady, className = "absolute inset-0" }: Props) {
+export function DepotCanvas({ table, labels, insets, onSound, onReady, autoDeliver = true, className = "absolute inset-0" }: Props) {
   const host = useRef<HTMLDivElement>(null);
   const stageRef = useRef<DepotStage | null>(null);
   const insetKey = JSON.stringify(insets ?? {});
@@ -41,9 +43,10 @@ export function DepotCanvas({ table, labels, insets, onSound, onReady, className
       stage = s;
       stageRef.current = s;
       s.setInsets(JSON.parse(JSON.stringify(latest.current.insets ?? {})));
-      unsubscribe = table.events.on((e) => {
-        if (e.type === "partCreated") void s.deliver(e.part);
-      });
+      if (autoDeliver)
+        unsubscribe = table.events.on((e) => {
+          if (e.type === "partCreated") void s.deliver(e.part);
+        });
       void s.ready.then(() => {
         if (cancelled) return;
         el.setAttribute("data-ready", "true");
@@ -56,6 +59,7 @@ export function DepotCanvas({ table, labels, insets, onSound, onReady, className
       unsubscribe();
       stage?.dispose();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [table]);
 
   return <div ref={host} className={className} />;

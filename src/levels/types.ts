@@ -1,4 +1,4 @@
-import type { InsertOptions, Part, QueryResult, QuerySpec, Table, TableSpec, Where } from "@/sim/table";
+import type { InsertOptions, KeyDistribution, Part, QueryResult, QuerySpec, Table, TableSpec, Where } from "@/sim/table";
 import type { Layout } from "@/stage/depotStage";
 import { shuffle } from "@/lib/rng";
 
@@ -20,11 +20,17 @@ export type Input = ChoiceInput | { type: "number" };
 
 /** What the stage can do for a level script (all awaitable: they resolve when the animation ends). */
 export type StageApi = {
-  deliver: (part: Part) => Promise<void>;
+  deliver: (part: Part, opts?: { quick?: boolean }) => Promise<void>;
   playQuery: (result: QueryResult) => Promise<void>;
   setLayout: (layout: Layout) => Promise<void>;
   setColumnSizes: (sizes: Record<string, number>) => Promise<void>;
   resetBoxes: () => Promise<void>;
+  merge: (sources: string[], part: Part) => Promise<void>;
+  turnAway: (kind: "rejected" | "duplicate") => Promise<void>;
+  dropParts: (names: string[]) => Promise<void>;
+  mutateParts: (names: string[]) => Promise<void>;
+  maskParts: (names: string[]) => Promise<void>;
+  setBuffer: (rows: number | null) => void;
 };
 
 export type TaskStats = {
@@ -33,7 +39,25 @@ export type TaskStats = {
   /** Queries whose result met the task's `goal` (see Tool "query"). */
   goodQueries: number;
   orderByChanges: number;
+  merges: number;
+  /** Inserts rejected (TOO_MANY_PARTS / too many partitions). */
+  rejected: number;
+  /** Inserts that arrived with the partition above the delay threshold. */
+  delayed: number;
+  /** Retried blocks dropped by insert deduplication. */
+  dedupHits: number;
+  /** Consecutive seconds a `bg.watch` condition held. */
+  calm: number;
+  /** Async-insert buffer flushes. */
+  flushes: number;
+  drops: number;
+  mutations: number;
+  lwDeletes: number;
+  /** One-shot action buttons pressed. */
+  actions: number;
 };
+
+export type Setting = string | number | boolean;
 
 /** Live context a step can read and act on. */
 export type LevelCtx = {
@@ -43,11 +67,34 @@ export type LevelCtx = {
   /** The last query the player (or a script) ran. */
   last: { spec: QuerySpec; result: QueryResult } | null;
   wait: (ms: number) => Promise<void>;
-  /** Insert and wait until the truck has delivered the part. */
-  insert: (rows: number, options?: InsertOptions) => Promise<Part>;
+  /** Values the player sets in the dock (Tool "setting"). */
+  settings: Record<string, Setting>;
+  /**
+   * Insert and wait until the part is on the shelf (truck, or `quick` drop). Resolves null when the
+   * insert was rejected (too many parts) or deduplicated.
+   */
+  insert: (rows: number, options?: InsertOptions & { quick?: boolean }) => Promise<Part | null>;
+  /** One INSERT spanning partitions: one part per partition (or null if rejected). */
+  insertBlock: (blocks: { partition: string; rows: number; dist?: KeyDistribution; keyRange?: [number, number] }[]) => Promise<Part[] | null>;
+  /** An application client inserting: goes through the async buffer when `settings.async` is true. */
+  clientInsert: (rows: number, options?: InsertOptions) => Promise<Part | null>;
+  /** Merge the given parts, or let the background selector pick (null when nothing to merge). */
+  merge: (names?: string[]) => Promise<Part | null>;
+  dropPartition: (partition: string) => Promise<void>;
+  /** ALTER TABLE … DELETE: returns the bytes rewritten. */
+  mutateDelete: (partition: string) => Promise<number>;
+  lightweightDelete: (partition: string) => Promise<void>;
   /** Run a query and wait until Pico has walked it. */
   query: (spec: QuerySpec) => Promise<QueryResult>;
   stage: StageApi;
+  /** Background loops: they stop when the step changes. Each iteration is awaited. */
+  bg: {
+    loop: (ms: number, fn: () => Promise<void>) => void;
+    /** The background merger: every `ms`, merge up to `maxRun` neighbouring parts. */
+    merger: (ms: number, maxRun?: number) => void;
+    watch: (ok: () => boolean) => void;
+    asyncFlusher: (flushMs: number, maxRows: number) => void;
+  };
 };
 
 export type Prediction = {
@@ -68,12 +115,16 @@ export type Tool =
    * Pick columns and run a query. `columns` limits the chips; `where` is a fixed filter shown in the
    * SQL; `goal` marks a query as good (counted in stats.goodQueries).
    */
-  | { type: "query"; columns?: string[]; where?: Where; goal?: (spec: QuerySpec, result: QueryResult) => boolean; select?: string }
-  /** Choose the table's ORDER BY column (World 1-3 compression, World 3 key order). */
-  | { type: "orderBy"; options: string[] };
+  | { type: "query"; columns?: string[]; where?: Where; partitions?: string[]; goal?: (spec: QuerySpec, result: QueryResult) => boolean; select?: string }
+  /** Choose the table's ORDER BY (one column, or a comma-separated key like "city, customer_id"). */
+  | { type: "orderBy"; options: string[] }
+  /** A segmented control bound to ctx.settings[field]; labels: `levels.<labels>.<option>`. */
+  | { type: "setting"; field: string; label: Msg; options: Setting[]; labels: string }
+  /** A one-shot button. */
+  | { type: "action"; id: string; label: Msg; icon?: "truck" | "repeat" | "trash" | "eraser" | "pencil" | "press" | "play"; tone?: "primary" | "accent" | "secondary" | "danger"; run: (ctx: LevelCtx) => Promise<unknown> };
 
 /** Live panels a step can show next to the stage. */
-export type Panel = "reading" | "parts" | "compression";
+export type Panel = "reading" | "parts" | "compression" | "partsMeter" | "index" | "explain";
 
 export type Step =
   | { kind: "brief"; title: Msg; body: Msg; mapping?: { icon: string; thing: Msg; real: Msg }[]; breaks?: Msg; code?: string }
@@ -90,7 +141,7 @@ export type Step =
       onEnter?: (ctx: LevelCtx) => void | Promise<void>;
       panels?: Panel[];
       /** A known solution: drives the autoplay test (and could power a hint). */
-      solution?: { columns?: string[]; orderBy?: string[] };
+      solution?: { columns?: string[]; orderBy?: string[]; settings?: Record<string, Setting>; actions?: string[] };
     };
 
 /** A recall-check question; `build` gets a seeded rng so a retry gets new numbers. */
@@ -108,6 +159,10 @@ export type Level = {
   table: TableSpec;
   /** Parts already on the shelves when the level starts. */
   initial?: { rows: number; options?: InsertOptions }[];
+  /** Initial dock settings (ctx.settings). */
+  settings?: Record<string, Setting>;
+  /** How key values print in panels (e.g. city index → name). */
+  format?: Record<string, (v: number) => string>;
   steps: Step[];
   check: Question[];
 };

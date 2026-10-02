@@ -83,7 +83,7 @@ export function DepotDesk() {
     audioBus().play("click", { bus: "ui" });
     const granules = INSERT_GRANULES[parts.length % INSERT_GRANULES.length];
     const rows = GRANULE_ROWS * granules - Math.floor(GRANULE_ROWS * 0.4);
-    const part = table.insert(rows);
+    const part = table.insert(rows)!;
     // The stage animates the delivery (it listens to partCreated); wait for it to finish
     await stage.current?.deliver(part).catch(() => {});
     setParts(table.activeParts.map((p) => ({ name: p.name, rows: p.rows })));

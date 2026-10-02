@@ -70,6 +70,23 @@
         document.querySelector("[data-run]:not([disabled])")?.click();
         await sleep(400);
         await idle();
+      } else if ((sol?.settings || sol?.actions) && !done.has(key)) {
+        for (const [f, v] of Object.entries(sol.settings || {})) {
+          document.querySelector(`[data-setting="${f}=${v}"]`)?.click();
+          await sleep(300);
+        }
+        for (const c of sol.orderBy || []) {
+          [...document.querySelectorAll("[role=radio]")].find((b) => b.textContent.trim() === c)?.click();
+          await sleep(300);
+          await idle();
+        }
+        for (const id of sol.actions || []) {
+          await idle();
+          document.querySelector(`[data-action="${id}"]:not([disabled])`)?.click();
+          await sleep(500);
+          await idle();
+        }
+        done.add(key);
       } else if (sol?.orderBy && !done.has(key)) {
         for (const c of sol.orderBy) {
           [...document.querySelectorAll("[role=radio]")].find((b) => b.textContent.trim() === c)?.click();

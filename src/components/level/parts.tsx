@@ -5,7 +5,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { motion } from "motion/react";
 import { Check, Eye, Package, Robot, Stack, Tag, Warehouse, X, ArrowsDownUp, Database, Rows, Truck, type Icon } from "@phosphor-icons/react";
 import type { Input, Msg, Panel } from "@/levels/types";
-import type { Table } from "@/sim/table";
+import type { QueryResult, QuerySpec, Table } from "@/sim/table";
 import { COLUMN_COLORS } from "@/stage/theme";
 import { gameButtonClass } from "../ui/GameButton";
 
@@ -212,7 +212,9 @@ export function useBytes() {
 const panelTitle = "mb-1.5 flex items-center gap-1.5 font-display text-xs font-bold uppercase tracking-[0.14em] text-ink-2";
 
 /** What the last query read: boxes and bytes, with a bar. */
-export function ReadingPanel({ last }: { last: { spec: { columns: string[] }; result: { boxesRead: number; boxesTotal: number; bytesRead: number; bytesTotal: number } } | null }) {
+type Last = { spec: QuerySpec; result: QueryResult } | null;
+
+export function ReadingPanel({ last }: { last: Last }) {
   const t = useTranslations("panels");
   const locale = useLocale();
   const bytes = useBytes();
@@ -317,10 +319,105 @@ export function CompressionPanel({ table }: { table: Table }) {
   );
 }
 
-export function Panels({ panels, table, last }: { panels: Panel[]; table: Table; last: Parameters<typeof ReadingPanel>[0]["last"] }) {
+/** Active parts per partition against the (scaled) delay / throw thresholds. */
+export function PartsMeterPanel({ table }: { table: Table }) {
+  const t = useTranslations("panels");
+  const { partsToDelay, partsToThrow } = table.settings;
+  const partitions = table.partitions.length ? table.partitions : ["all"];
+  return (
+    <div>
+      <p className={panelTitle}>
+        <Stack weight="bold" /> {t("partsMeter")}
+      </p>
+      <ul className="space-y-2.5">
+        {partitions.map((p) => {
+          const n = table.activeCount(p);
+          const hot = n >= partsToDelay;
+          return (
+            <li key={p}>
+              <div className="flex items-baseline justify-between font-mono text-sm">
+                <span className="font-bold">{p}</span>
+                <span key={n} className={`animate-bump font-display text-xl font-extrabold ${n >= partsToThrow ? "text-danger" : hot ? "text-amber-dark" : "text-ink"}`}>
+                  {n} <span className="text-sm text-ink-2">/ {partsToThrow}</span>
+                </span>
+              </div>
+              <div className="relative mt-1 h-3.5 overflow-hidden rounded-full bg-paper-2">
+                <motion.div className={`h-full rounded-full ${n >= partsToThrow ? "bg-danger" : hot ? "bg-amber" : "bg-read"}`} animate={{ width: `${Math.min(100, (n / partsToThrow) * 100)}%` }} transition={{ type: "spring", stiffness: 220, damping: 26 }} />
+                <span className="absolute inset-y-0 w-0.5 bg-amber-dark" style={{ left: `${(partsToDelay / partsToThrow) * 100}%` }} />
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="mt-2 text-sm leading-snug text-ink-2">{t("partsMeterNote", { delay: partsToDelay, throw: partsToThrow })}</p>
+    </div>
+  );
+}
+
+/** primary.idx: one entry per granule (its first key values); the last query's picks in teal. */
+export function IndexPanel({ table, last, format }: { table: Table; last: Last; format?: Record<string, (v: number) => string> }) {
+  const t = useTranslations("panels");
+  const key = table.spec.orderBy ?? [];
+  const read = new Set(last ? last.result.boxes.filter((b) => b.read).map((b) => `${b.part}/${b.granule}`) : []);
+  const fmt = (col: string, v: number) => format?.[col]?.(v) ?? String(Math.round(v));
+  return (
+    <div>
+      <p className={panelTitle}>
+        <Database weight="bold" /> primary.idx
+      </p>
+      <p className="mb-2 font-mono text-sm text-ink-2">
+        ORDER BY <b className="text-ink">({key.join(", ")})</b>
+      </p>
+      {table.activeParts.map((p) => (
+        <div key={p.name} className="mb-2">
+          <p className="mb-1 font-mono text-xs font-bold text-ink-2">{p.name}</p>
+          <ol className="grid grid-cols-3 gap-1">
+            {p.granules.map((g, i) => {
+              const on = last && read.has(`${p.name}/${i}`);
+              return (
+                <li key={i} className={`truncate rounded-md px-1.5 py-1 font-mono text-[11px] leading-tight ${on ? "bg-read text-white" : last ? "bg-paper-2 text-ink-2/60" : "bg-paper-2 text-ink"}`} title={`${t("mark")} ${i}`}>
+                  {key.map((c) => (g.keys?.[c] ? fmt(c, g.keys[c][0]) : g.min !== undefined && c === key[0] ? fmt(c, g.min) : "·")).join(" · ")}
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** EXPLAIN indexes = 1, as the funnel ClickHouse prints. */
+export function ExplainPanel({ last }: { last: Last }) {
+  const t = useTranslations("panels");
+  const ex = last?.result.explain;
+  return (
+    <div>
+      <p className={panelTitle}>
+        <Database weight="bold" /> EXPLAIN indexes = 1
+      </p>
+      {ex ? (
+        <pre className="overflow-x-auto rounded-xl bg-ink px-3 py-2 font-mono text-[13px] leading-relaxed text-paper">
+          {ex.map((e) => `${e.stage}\n  Parts: ${e.parts[0]}/${e.parts[1]}\n  Granules: ${e.granules[0]}/${e.granules[1]}`).join("\n")}
+        </pre>
+      ) : (
+        <p className="text-base leading-snug text-ink-2">{t("noQuery")}</p>
+      )}
+    </div>
+  );
+}
+
+export function Panels({ panels, table, last, format }: { panels: Panel[]; table: Table; last: Last; format?: Record<string, (v: number) => string> }) {
   return (
     <div className="space-y-4">
-      {panels.map((p) => (p === "reading" ? <ReadingPanel key={p} last={last} /> : p === "parts" ? <PartsPanel key={p} table={table} /> : <CompressionPanel key={p} table={table} />))}
+      {panels.map((p) =>
+        p === "reading" ? <ReadingPanel key={p} last={last} />
+        : p === "parts" ? <PartsPanel key={p} table={table} />
+        : p === "partsMeter" ? <PartsMeterPanel key={p} table={table} />
+        : p === "index" ? <IndexPanel key={p} table={table} last={last} format={format} />
+        : p === "explain" ? <ExplainPanel key={p} last={last} />
+        : <CompressionPanel key={p} table={table} />,
+      )}
     </div>
   );
 }

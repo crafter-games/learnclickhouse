@@ -49,7 +49,10 @@ function onStageSound(sound: string, i = 0) {
   else if (sound === "skip") a.play("skip", { minGapMs: 35, volume: 0.8 });
   else if (sound === "land") a.play("land", { minGapMs: 45, volume: 0.6 });
   else if (sound === "seal") a.play("seal");
-  else if (sound === "truck") a.play("truck", { volume: 0.8 });
+  else if (sound === "truck") a.play("truck", { volume: 0.8, minGapMs: 300 });
+  else if (sound === "merge") a.play("merge");
+  else if (sound === "reject") a.play("reject");
+  else if (sound === "drop") a.play("drop");
 }
 
 /** `onRestart` remounts the player: a fresh table, new numbers, back to step 1. */
@@ -93,6 +96,8 @@ export function LevelPlayer({ level, onRestart }: { level: Level; onRestart: () 
   };
 
   useEffect(() => session.subscribe(() => setTick((n) => n + 1)), [session]);
+  // Stop background loops when the level unmounts
+  useEffect(() => () => session.dispose(), [session]);
   useEffect(() => audioBus().preload(), []);
 
   /** Run an animation-bearing action; the dock is disabled meanwhile. */
@@ -236,10 +241,10 @@ export function LevelPlayer({ level, onRestart }: { level: Level; onRestart: () 
       audioBus().play("click", { bus: "ui" });
       const tool = step.kind === "task" ? step.tools.find((x) => x.type === "query") : undefined;
       void act(async () => {
-        const spec = { columns, where };
+        const spec = { columns, where, partitions: tool?.type === "query" ? tool.partitions : undefined };
         const result = await ctx.query(spec);
         audioBus().play("done", { rate: 1 + (1 - result.boxesRead / result.boxesTotal) * 0.5 });
-        if (tool?.type === "query" && tool.goal?.(spec, result)) ctx.stats.goodQueries++;
+        if (tool?.type === "query" && tool.goal?.(spec, result)) session.recordGoodQuery();
         else if (tool?.type === "query" && tool.goal) audioBus().play("wrong", { bus: "ui", rate: 1.1 });
         session.changed();
       });
@@ -249,7 +254,17 @@ export function LevelPlayer({ level, onRestart }: { level: Level; onRestart: () 
       session.setOrderBy(column);
       void act(() => ctx.stage.setColumnSizes(boxSizes(table)));
     },
-    currentOrderBy: () => table.spec.orderBy?.[0],
+    currentOrderBy: () => (table.spec.orderBy ?? []).join(", "),
+    setting: (field, value) => {
+      audioBus().play("click", { bus: "ui", rate: 1.2 });
+      session.setSetting(field, value);
+    },
+    currentSetting: (field) => ctx.settings[field],
+    action: (tool) => {
+      audioBus().play("click", { bus: "ui" });
+      session.recordAction();
+      void act(() => tool.run(ctx));
+    },
   };
 
   useEffect(() => {
@@ -277,15 +292,22 @@ export function LevelPlayer({ level, onRestart }: { level: Level; onRestart: () 
         <section className="absolute inset-0" data-testid="stage">
           <DepotCanvas
             table={table}
+            autoDeliver={false}
             insets={insets}
             onSound={onStageSound}
             onReady={(s) => {
               session.attachStage({
-                deliver: (p) => s.deliver(p),
+                deliver: (p, o) => s.deliver(p, o),
                 playQuery: (r) => s.playQuery(r),
                 setLayout: (l) => s.setLayout(l),
                 setColumnSizes: (sz) => s.setColumnSizes(sz),
                 resetBoxes: () => s.resetBoxes(),
+                merge: (src, part) => s.merge(src, part),
+                turnAway: (k) => s.turnAway(k),
+                dropParts: (n) => s.dropParts(n),
+                mutateParts: (n) => s.mutateParts(n),
+                maskParts: (n) => s.maskParts(n),
+                setBuffer: (r) => s.setBuffer(r),
               });
               setStageReady(true);
             }}
@@ -294,6 +316,10 @@ export function LevelPlayer({ level, onRestart }: { level: Level; onRestart: () 
               part: (name) => name,
               dock: ts("dock"),
               rows: ts("rows", { table: table.spec.name }),
+              hall: (p) => ts("hall", { p }),
+              rejected: ts("rejected"),
+              duplicate: ts("duplicate"),
+              buffer: (rows) => ts("buffer", { rows }),
             }}
           />
         </section>
@@ -355,7 +381,7 @@ export function LevelPlayer({ level, onRestart }: { level: Level; onRestart: () 
 
             {panels && panels.length > 0 && (
               <aside ref={sideRef} className="card max-h-[26dvh] w-full overflow-y-auto px-4 py-3 lg:absolute lg:right-4 lg:top-[84px] lg:z-10 lg:max-h-[calc(100dvh-220px)] lg:w-[330px]">
-                <Panels panels={panels} table={table} last={ctx.last} />
+                <Panels panels={panels} table={table} last={ctx.last} format={level.format} />
               </aside>
             )}
           </div>

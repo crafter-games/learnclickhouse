@@ -178,3 +178,33 @@ button, a { touch-action: manipulation; }
 }
 .iris-open { animation: iris-open 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both; }
 @media (prefers-reduced-motion: reduce) { .iris-open { display: none; } }
+
+/* ---------- M3 stage labels ---------- */
+.hall-tag, .buffer-tag, .truck-stamp { white-space: nowrap; line-height: 1; }
+.hall-tag {
+  font: 800 calc(14px * var(--stage-zoom, 1)) var(--font-code);
+  letter-spacing: 0.04em;
+  color: var(--paper);
+  background: var(--indigo);
+  border-radius: 0.5em;
+  padding: 0.45em 0.7em;
+  box-shadow: 0 0.2em 0 var(--indigo-dark);
+}
+.buffer-tag {
+  font: 800 calc(14px * var(--stage-zoom, 1)) var(--font-code);
+  color: var(--ink);
+  background: var(--amber);
+  border: 2px solid var(--amber-dark);
+  border-radius: 0.6em;
+  padding: 0.35em 0.6em;
+}
+.truck-stamp {
+  font: 900 calc(16px * var(--stage-zoom, 1)) var(--font-display);
+  color: #fff;
+  border-radius: 0.6em;
+  padding: 0.45em 0.8em;
+  animation: stamp 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+  box-shadow: 0 0.2em 0 rgba(0, 0, 0, 0.2);
+}
+.truck-stamp--rejected { background: var(--danger); }
+.truck-stamp--duplicate { background: var(--amber-dark); }

@@ -1,13 +1,16 @@
 import { seeded, shuffle } from "@/lib/rng";
 import type { Level, Question } from "./types";
 import { WORLD1 } from "./world1";
+import { WORLD2 } from "./world2";
+import { WORLD3 } from "./world3";
+import { WORLD4 } from "./world4";
 
 /** Worlds in the map; `levels` empty = "coming soon" building. */
 export const WORLDS: { id: number; levels: Level[] }[] = [
   { id: 1, levels: WORLD1 },
-  { id: 2, levels: [] },
-  { id: 3, levels: [] },
-  { id: 4, levels: [] },
+  { id: 2, levels: WORLD2 },
+  { id: 3, levels: WORLD3 },
+  { id: 4, levels: WORLD4 },
 ];
 export const ALL_LEVELS: Level[] = WORLDS.flatMap((w) => w.levels);
 

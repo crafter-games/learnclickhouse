@@ -10,17 +10,21 @@ import { Tweens, easeInOutCubic, easeOutBack, easeOutCubic, wait } from "./tween
 // Column layout: one aisle (rack line) per column, one box per granule.
 // Row layout (World 1's "before"): a single long rack where each granule's boxes sit side by side,
 // one per column — every box of a row block is stored together.
+// Sections (parts) are ordered by partition, then block number; partitions are separate "halls".
 // Racks run along +x; each rack has a walkway in front of it (towards the camera) for Pico.
 const AISLE = 2.25; // distance between racks
 const WALK = 1.12; // walkway offset in front of a rack (centre of the gap, clear of uprights)
 const START_X = 0; // first shelf cell
 const SECTION_GAP = 0.55; // space between parts (sections)
+const PARTITION_GAP = 1.9; // space between partitions (halls)
 const RACK_Y = 0.42; // top of the rollers
 const DRIVE_SPEED = 4.2; // Pico, units per second
 const FOV = 35;
 const READ = new THREE.Color(COLORS.read);
 const SKIPPED = new THREE.Color(0xcfcbdf);
+const MASKED = new THREE.Color(0xf0a8ab);
 const WHITE = new THREE.Color(0xffffff);
+const HALL_TINTS = [0xd9d2f2, 0xd2e6ee, 0xeedfd2, 0xd8ecd9, 0xeed6e6];
 /** General shot: from the front, a little to the right and above. */
 const GENERAL_DIR = new THREE.Vector3(0.24, 0.74, 1).normalize();
 
@@ -32,16 +36,21 @@ export type StageLabels = {
   dock: string;
   /** Tag of the single rack in the row layout. */
   rows: string;
+  /** Partition hall sign. */
+  hall?: (partition: string) => string;
+  rejected?: string;
+  duplicate?: string;
+  buffer?: (rows: number) => string;
 };
 
-export type BoxSound = "read" | "skip" | "seal" | "land" | "truck";
+export type BoxSound = "read" | "skip" | "seal" | "land" | "truck" | "merge" | "reject" | "drop";
 
 export type StageOptions = {
   /** Called for every box Pico opens or skips, and other stage-timed sounds. */
   onSound?: (sound: BoxSound, index?: number) => void;
 };
 
-type BoxState = "idle" | "read" | "skipped";
+type BoxState = "idle" | "read" | "skipped" | "masked";
 type Box = {
   granule: number;
   column: number;
@@ -52,7 +61,8 @@ type Box = {
   /** Visual size (compression), applied on top of squash animations. */
   size: number;
 };
-type Section = { part: Part; x0: number; width: number; boxes: Box[]; tag: CSS2DObject; racks: THREE.Object3D[] };
+type Section = { part: Part; x0: number; width: number; boxes: Box[]; tag: CSS2DObject; racks: THREE.Object3D[]; masked?: boolean };
+type Hall = { tag: CSS2DObject; floor: THREE.Mesh };
 
 type Shot = { pos: THREE.Vector3; look: THREE.Vector3; off: { x: number; y: number } };
 
@@ -73,10 +83,14 @@ export class DepotStage {
   private tweens = new Tweens();
   private pico = new Pico();
   private sections: Section[] = [];
+  private halls = new Map<string, Hall>();
   private aisleTags: HTMLElement[] = [];
   private aisleProps: THREE.Object3D[] = [];
   private rowTag: { obj: CSS2DObject; inner: HTMLElement } | null = null;
+  private bufferTag: { obj: CSS2DObject; inner: HTMLElement } | null = null;
+  private truckStamp: { obj: CSS2DObject; inner: HTMLElement } | null = null;
   private truck: THREE.Object3D | null = null;
+  private press: THREE.Object3D | null = null;
   private frame = 0;
   private last = performance.now();
   private resizeObs: ResizeObserver;
@@ -121,7 +135,7 @@ export class DepotStage {
     });
   }
 
-  /** Run one animation at a time, in order (deliveries, queries, layout changes). */
+  /** Run one animation at a time, in order (deliveries, queries, merges, layout changes). */
   private queue(run: () => Promise<void>) {
     const next = this.busy.then(async () => {
       await this.ready;
@@ -159,12 +173,15 @@ export class DepotStage {
   private get leftAisleX() {
     return START_X - 1.9;
   }
-  private get rightAisleX() {
+  private get endX() {
     const last = this.sections[this.sections.length - 1];
-    return (last ? last.x0 + last.width : START_X) + 0.9;
+    return last ? last.x0 + last.width : START_X;
+  }
+  private get rightAisleX() {
+    return this.endX + 0.9;
   }
   private sectionWidth(part: Part, layout = this.layout) {
-    return part.granules.length * (layout === "rows" ? this.columns.length : 1);
+    return Math.max(1, part.granules.length) * (layout === "rows" ? this.columns.length : 1);
   }
   /** Rack line and x of a box in a layout. */
   private slot(x0: number, granule: number, column: number, layout = this.layout) {
@@ -175,14 +192,31 @@ export class DepotStage {
     const { line, x } = this.slot(x0, b.granule, b.column, layout);
     return new THREE.Vector3(x, RACK_Y, this.rackZ(line));
   }
-  private nextSectionX() {
-    const last = this.sections[this.sections.length - 1];
-    return last ? last.x0 + last.width + SECTION_GAP : START_X;
+  private partitioned() {
+    return this.sections.some((s) => s.part.partition !== "all");
+  }
+  /** Sections in shelf order: by partition, then by block number. */
+  private sortSections() {
+    this.sections.sort((a, b) => (a.part.partition < b.part.partition ? -1 : a.part.partition > b.part.partition ? 1 : a.part.minBlock - b.part.minBlock));
+  }
+  /** Where every section starts, with a wider gap between partitions. */
+  private computeLayout() {
+    const out = new Map<Section, { x0: number; width: number }>();
+    let x = START_X;
+    let prev: string | null = null;
+    for (const s of this.sections) {
+      if (prev !== null) x += prev === s.part.partition ? SECTION_GAP : PARTITION_GAP;
+      const width = this.sectionWidth(s.part);
+      out.set(s, { x0: x, width });
+      x += width;
+      prev = s.part.partition;
+    }
+    return out;
   }
   /** World-space bounds of what the general shot must show. */
   private contentBounds() {
-    const maxX = Math.max(this.nextSectionX() + 1.2, START_X + 7);
-    return new THREE.Box3(new THREE.Vector3(this.dockPos.x - 0.6, 0, this.rackZ(0) - 0.9), new THREE.Vector3(maxX, 1.3, this.frontZ));
+    const maxX = Math.max(this.endX + 1.4, START_X + 7);
+    return new THREE.Box3(new THREE.Vector3(this.dockPos.x - 0.6, 0, this.rackZ(0) - 0.9), new THREE.Vector3(maxX, 1.3, this.frontZ + (this.partitioned() ? 0.7 : 0)));
   }
 
   // ------------------------------------------------------------------ build
@@ -195,15 +229,15 @@ export class DepotStage {
     sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.radius = 4;
     sun.shadow.bias = -0.0008;
-    Object.assign(sun.shadow.camera, { left: -16, right: 30, top: 16, bottom: -12, near: 1, far: 50 });
-    sun.target.position.set(8, 0, 3);
+    Object.assign(sun.shadow.camera, { left: -16, right: 44, top: 16, bottom: -12, near: 1, far: 60 });
+    sun.target.position.set(12, 0, 3);
     this.scene.add(sun, sun.target);
   }
 
   private async build() {
     const n = this.columns.length;
     // Floor: a soft platform with painted tile joints
-    const x0 = -9, x1 = 33, z0 = -2.2, z1 = this.frontZ + 2.6;
+    const x0 = -9, x1 = 47, z0 = -2.2, z1 = this.frontZ + 3;
     const slab = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 0.3, z1 - z0), new THREE.MeshStandardMaterial({ color: 0xe6e2f2, roughness: 0.95 }));
     slab.position.set((x0 + x1) / 2, -0.15, (z0 + z1) / 2);
     slab.receiveShadow = true;
@@ -214,9 +248,8 @@ export class DepotStage {
     const jointGeo = new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(joints, 3));
     this.scene.add(new THREE.LineSegments(jointGeo, new THREE.LineBasicMaterial({ color: 0xc9c3de })));
 
-    // Back wall with windows, behind the first rack
     // Warm up every model this scene uses in one parallel batch
-    const [wall, windowWide] = await Promise.all([
+    const [wall, windowWide, post, hopper] = await Promise.all([
       model("factory", "structure-wall"),
       model("factory", "structure-window-wide"),
       model("factory", "structure-yellow-medium"),
@@ -224,8 +257,10 @@ export class DepotStage {
       model("factory", "box-small"),
       model("factory", "conveyor-bars-high"),
       model("factory", "structure-yellow-short"),
+      model("factory", "piston-square"),
       model("car", "delivery"),
     ]);
+    // Back wall with windows, behind the first rack
     for (let x = x0 + 1; x < x1; x += 2) {
       if (Math.round((x - x0) / 2) % 3 === 1) {
         const w = windowWide.clone();
@@ -248,7 +283,6 @@ export class DepotStage {
     }
 
     // Aisle signs: a yellow post with the column name (hidden in the row layout)
-    const post = await model("factory", "structure-yellow-medium");
     this.columns.forEach((col, c) => {
       const p = post.clone();
       p.position.set(START_X - 1.0, 0, this.rackZ(c));
@@ -266,13 +300,22 @@ export class DepotStage {
     this.rowTag = { obj: row.obj, inner: row.inner };
     this.applyAisleSigns(false);
 
-    // Dock: hopper + a sign; trucks park next to it
-    const hopper = await model("factory", "hopper-high-square");
-    hopper.position.copy(this.dockPos).add(new THREE.Vector3(1.6, 0, -0.9));
-    this.scene.add(hopper);
+    // Dock: hopper (the async-insert buffer) + a sign; trucks park next to it
+    const h = hopper.clone();
+    h.position.copy(this.dockPos).add(new THREE.Vector3(1.6, 0, -0.9));
+    this.scene.add(h);
     const dockTag = label("stage-tag stage-tag--dock", this.text.dock);
-    dockTag.obj.position.copy(hopper.position).add(new THREE.Vector3(0, 1.9, 0));
+    dockTag.obj.position.copy(h.position).add(new THREE.Vector3(0, 1.9, 0));
     this.scene.add(dockTag.obj);
+    const buf = label("buffer-tag", "");
+    buf.obj.position.copy(h.position).add(new THREE.Vector3(0, 2.6, 0));
+    buf.outer.style.visibility = "hidden";
+    this.scene.add(buf.obj);
+    this.bufferTag = { obj: buf.obj, inner: buf.inner };
+    const stamp = label("truck-stamp", "");
+    stamp.outer.style.visibility = "hidden";
+    this.scene.add(stamp.obj);
+    this.truckStamp = { obj: stamp.obj, inner: stamp.inner };
 
     // Pico waits at the entrance
     this.pico.root.position.copy(this.homePos);
@@ -280,7 +323,9 @@ export class DepotStage {
     this.scene.add(this.pico.root);
 
     // Parts that already exist (a level that starts with data)
-    for (const part of this.table.activeParts) await this.addSection(part, false);
+    for (const part of this.table.activeParts) this.sections.push(await this.makeSection(part));
+    this.sortSections();
+    await this.applyLayout(false);
   }
 
   /** Column signs in the column layout, one "rows" sign in the row layout. */
@@ -319,74 +364,262 @@ export class DepotStage {
     return racks;
   }
 
-  private async addSection(part: Part, animate: boolean) {
-    const x0 = this.nextSectionX();
-    const width = this.sectionWidth(part);
-    const boxModel = await model("factory", "box-small");
-    const racks = await this.buildRacks(x0, width);
-    const boxes: Box[] = [];
-    for (let g = 0; g < part.granules.length; g++)
-      for (let c = 0; c < this.columns.length; c++) {
-        const obj = boxModel.clone(true);
-        obj.traverse((o) => {
-          const mesh = o as THREE.Mesh;
-          if (mesh.isMesh) mesh.material = (mesh.material as THREE.Material).clone();
-        });
-        // A sticker in the column's colour on the front face: which column this box holds
-        const sticker = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.18), new THREE.MeshStandardMaterial({ color: COLUMN_COLORS[c % COLUMN_COLORS.length], roughness: 0.6 }));
-        sticker.position.set(0, 0.3, 0.256);
-        obj.add(sticker);
-        obj.rotation.y = (((g * 7 + c * 3) % 5) - 2) * 0.03;
-        const mats = materialsOf(obj).filter((m) => m !== sticker.material);
-        const box: Box = { granule: g, column: c, obj, mats, maps: mats.map((m) => m.map), state: "idle", size: 1 };
-        obj.position.copy(this.boxPos(x0, box));
-        this.scene.add(obj);
-        boxes.push(box);
-      }
-    const tag = label("part-tag", this.text.part(part.name));
-    tag.obj.position.set(x0 + width / 2, 0.05, this.frontZ - 0.55);
-    this.scene.add(tag.obj);
-    const section: Section = { part, x0, width, boxes, tag: tag.obj, racks };
-    this.sections.push(section);
-
-    if (!animate) return section;
-    // Everything starts hidden; the truck delivers it
-    for (const r of racks) r.scale.setScalar(0.001);
-    for (const b of boxes) b.obj.visible = false;
-    tag.outer.style.visibility = "hidden";
-    return section;
+  private async makeBox(g: number, c: number): Promise<Box> {
+    const obj = (await model("factory", "box-small")).clone(true);
+    obj.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh) mesh.material = (mesh.material as THREE.Material).clone();
+    });
+    // A sticker in the column's colour on the front face: which column this box holds
+    const sticker = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.18), new THREE.MeshStandardMaterial({ color: COLUMN_COLORS[c % COLUMN_COLORS.length], roughness: 0.6 }));
+    sticker.position.set(0, 0.3, 0.256);
+    obj.add(sticker);
+    obj.rotation.y = (((g * 7 + c * 3) % 5) - 2) * 0.03;
+    const mats = materialsOf(obj).filter((m) => m !== sticker.material);
+    this.scene.add(obj);
+    return { granule: g, column: c, obj, mats, maps: mats.map((m) => m.map), state: "idle", size: 1 };
   }
 
-  /** A truck backs into the dock, its boxes fly to their shelves, the section is sealed. */
-  deliver(part: Part): Promise<void> {
+  /** A section for a part: boxes and a name tag (racks and positions come from applyLayout). */
+  private async makeSection(part: Part, boxes?: Box[]): Promise<Section> {
+    const all = boxes ?? [];
+    if (!boxes) for (let g = 0; g < part.granules.length; g++) for (let c = 0; c < this.columns.length; c++) all.push(await this.makeBox(g, c));
+    const tag = label("part-tag", this.text.part(part.name));
+    this.scene.add(tag.obj);
+    return { part, x0: NaN, width: this.sectionWidth(part), boxes: all, tag: tag.obj, racks: [] };
+  }
+
+  private removeSectionObjects(s: Section, keepBoxes = false) {
+    for (const r of s.racks) this.scene.remove(r);
+    s.racks = [];
+    this.scene.remove(s.tag);
+    (s.tag.element as HTMLElement).remove();
+    if (!keepBoxes) for (const b of s.boxes) this.scene.remove(b.obj);
+  }
+
+  /**
+   * Move every section to its computed place: rebuild the racks of sections that moved, glide their
+   * boxes and tags, and redraw the partition halls.
+   */
+  private async applyLayout(animate: boolean, skipBoxes = new Set<Box>()) {
+    const layout = this.computeLayout();
+    const moves: Promise<void>[] = [];
+    for (const s of this.sections) {
+      const { x0, width } = layout.get(s)!;
+      const moved = s.x0 !== x0 || s.width !== width || !s.racks.length;
+      s.x0 = x0;
+      s.width = width;
+      if (moved) {
+        for (const r of s.racks) this.scene.remove(r);
+        s.racks = await this.buildRacks(x0, width);
+        if (animate) for (const r of s.racks) {
+          r.scale.setScalar(0.001);
+          moves.push(this.tweens.to(r.scale, { x: 1, y: 1, z: 1 }, 260, easeOutBack));
+        }
+      }
+      s.tag.position.set(x0 + width / 2, 0.05, this.frontZ - 0.55);
+      for (const b of s.boxes) {
+        if (skipBoxes.has(b)) continue;
+        const to = this.boxPos(x0, b);
+        if (!animate || b.obj.position.distanceTo(to) < 0.001) b.obj.position.copy(to);
+        else moves.push(this.tweens.to(b.obj.position, { x: to.x, y: to.y, z: to.z }, 420, easeInOutCubic));
+      }
+    }
+    this.updateHalls();
+    this.refit();
+    await Promise.all(moves);
+  }
+
+  /** One sign and a tinted floor per partition (only when the table is partitioned). */
+  private updateHalls() {
+    const groups = new Map<string, { x0: number; x1: number }>();
+    if (this.partitioned())
+      for (const s of this.sections) {
+        const g = groups.get(s.part.partition);
+        groups.set(s.part.partition, g ? { x0: g.x0, x1: s.x0 + s.width } : { x0: s.x0, x1: s.x0 + s.width });
+      }
+    for (const [p, hall] of this.halls)
+      if (!groups.has(p)) {
+        this.scene.remove(hall.tag, hall.floor);
+        (hall.tag.element as HTMLElement).remove();
+        this.halls.delete(p);
+      }
+    [...groups.entries()].forEach(([p, { x0, x1 }], i) => {
+      let hall = this.halls.get(p);
+      if (!hall) {
+        const tag = label("hall-tag", this.text.hall?.(p) ?? p);
+        const floor = new THREE.Mesh(new THREE.BoxGeometry(1, 0.02, 1), new THREE.MeshStandardMaterial({ color: HALL_TINTS[i % HALL_TINTS.length], roughness: 1 }));
+        floor.receiveShadow = true;
+        this.scene.add(tag.obj, floor);
+        hall = { tag: tag.obj, floor };
+        this.halls.set(p, hall);
+      }
+      const w = x1 - x0 + 0.9;
+      const depth = this.frontZ - this.rackZ(0) + 1.2;
+      hall.floor.scale.set(w, 1, depth);
+      hall.floor.position.set((x0 + x1) / 2, 0.01, this.rackZ(0) - 0.8 + depth / 2);
+      hall.tag.position.set((x0 + x1) / 2, 0.05, this.frontZ + 0.15);
+    });
+  }
+
+  /** A part arrives: by truck (fly from the dock) or `quick` (drops straight onto the shelf). */
+  deliver(part: Part, opts: { quick?: boolean } = {}): Promise<void> {
     // The canvas (sim event) and a level script (await) can both ask for the same delivery
     const pending = this.deliveries.get(part.name);
     if (pending) return pending;
     const next = this.queue(async () => {
-      const section = await this.addSection(part, true);
-      this.refit();
-      const truck = await this.driveTruckIn();
-      void Promise.all(section.racks.map((p, i) => wait(i * 8).then(() => this.tweens.to(p.scale, { x: 1, y: 1, z: 1 }, 260, easeOutBack))));
-      const from = truck.position.clone().add(new THREE.Vector3(0.6, 1.1, 0));
-      await Promise.all(
-        section.boxes.map((b, i) =>
-          wait(i * 55).then(async () => {
-            const to = this.boxPos(section.x0, b);
-            b.obj.visible = true;
-            await this.fly(b, from, to);
-            this.options.onSound?.("land", i);
-            void this.squash(b);
-          }),
-        ),
-      );
+      const section = await this.makeSection(part);
+      for (const b of section.boxes) b.obj.visible = false;
+      (section.tag.element as HTMLElement).style.visibility = "hidden";
+      this.sections.push(section);
+      this.sortSections();
+      await this.applyLayout(true, new Set(section.boxes));
+      if (opts.quick) {
+        await Promise.all(
+          section.boxes.map((b, i) =>
+            wait(i * 12).then(async () => {
+              const to = this.boxPos(section.x0, b);
+              b.obj.visible = true;
+              await this.fly(b, to.clone().add(new THREE.Vector3(0, 2.2, 0)), to, 220, 0);
+              void this.squash(b);
+            }),
+          ),
+        );
+        this.options.onSound?.("land", 0);
+      } else {
+        const truck = await this.driveTruckIn();
+        const from = truck.position.clone().add(new THREE.Vector3(0.6, 1.1, 0));
+        await Promise.all(
+          section.boxes.map((b, i) =>
+            wait(i * 55).then(async () => {
+              b.obj.visible = true;
+              await this.fly(b, from, this.boxPos(section.x0, b));
+              this.options.onSound?.("land", i);
+              void this.squash(b);
+            }),
+          ),
+        );
+        void this.driveTruckOut(truck);
+      }
       const tagEl = section.tag.element as HTMLElement;
       tagEl.style.visibility = "visible";
       tagEl.firstElementChild?.classList.add("is-new");
       this.options.onSound?.("seal");
-      void this.driveTruckOut(truck);
     });
     this.deliveries.set(part.name, next);
     return next;
+  }
+
+  /** A truck comes in, gets a stamp (rejected / duplicate) and drives away with its load. */
+  turnAway(kind: "rejected" | "duplicate"): Promise<void> {
+    return this.queue(async () => {
+      const truck = await this.driveTruckIn();
+      const st = this.truckStamp!;
+      st.inner.className = `truck-stamp truck-stamp--${kind}`;
+      st.inner.textContent = (kind === "rejected" ? this.text.rejected : this.text.duplicate) ?? kind;
+      st.obj.position.copy(truck.position).add(new THREE.Vector3(0, 2.1, 0));
+      (st.obj.element as HTMLElement).style.visibility = "visible";
+      this.options.onSound?.(kind === "rejected" ? "reject" : "drop");
+      await wait(900);
+      (st.obj.element as HTMLElement).style.visibility = "hidden";
+      await this.driveTruckOut(truck);
+    });
+  }
+
+  /** The async-insert buffer above the hopper (rows waiting to become one part). */
+  setBuffer(rows: number | null) {
+    if (!this.bufferTag) return;
+    const el = this.bufferTag.obj.element as HTMLElement;
+    el.style.visibility = rows === null ? "hidden" : "visible";
+    if (rows !== null) this.bufferTag.inner.textContent = this.text.buffer?.(rows) ?? String(rows);
+  }
+
+  /**
+   * A background merge: the press comes down over the source sections, their boxes slide together
+   * into one new section (fewer boxes if partial granules combined), the old tags fade.
+   */
+  merge(sources: string[], part: Part): Promise<void> {
+    return this.queue(async () => {
+      const src = this.sections.filter((s) => sources.includes(s.part.name));
+      if (!src.length) return;
+      const x0 = Math.min(...src.map((s) => s.x0));
+      const x1 = Math.max(...src.map((s) => s.x0 + s.width));
+      // Press down
+      if (!this.press) {
+        this.press = await model("factory", "piston-square");
+        this.press.scale.set(1.4, 1.2, 1.4);
+        this.scene.add(this.press);
+      }
+      const press = this.press;
+      press.visible = true;
+      press.position.set((x0 + x1) / 2, 4, this.rackZ(this.layout === "rows" ? this.rowLine : this.columns.length - 1) + 0.2);
+      await this.tweens.to(press.position, { y: 1.05 }, 260, (t) => t * t);
+      this.options.onSound?.("merge");
+      // Reuse source boxes for the new part, column by column; extras leave
+      const keep: Box[] = [];
+      const extras: Box[] = [];
+      for (let c = 0; c < this.columns.length; c++) {
+        const col = src.flatMap((s) => s.boxes.filter((b) => b.column === c).sort((a, b) => a.granule - b.granule));
+        col.forEach((b, i) => {
+          if (i < part.granules.length) {
+            b.granule = i;
+            keep.push(b);
+          } else extras.push(b);
+        });
+      }
+      for (const s of src) this.removeSectionObjects(s, true);
+      this.sections = this.sections.filter((s) => !src.includes(s));
+      const merged = await this.makeSection(part, keep);
+      if (src.some((s) => s.masked)) for (const b of keep) this.setBox(b, "idle");
+      this.sections.push(merged);
+      this.sortSections();
+      for (const b of extras)
+        void this.tweens.to(b.obj.scale, { x: 0.001, y: 0.001, z: 0.001 }, 220).then(() => this.scene.remove(b.obj));
+      const tagEl = merged.tag.element as HTMLElement;
+      tagEl.firstElementChild?.classList.add("is-new");
+      await Promise.all([this.applyLayout(true), this.tweens.to(press.position, { y: 4 }, 380, easeOutCubic)]);
+      press.visible = false;
+    });
+  }
+
+  /** DROP PARTITION: the sections are lifted away at once. */
+  dropParts(names: string[]): Promise<void> {
+    return this.queue(async () => {
+      const gone = this.sections.filter((s) => names.includes(s.part.name));
+      this.options.onSound?.("drop");
+      await Promise.all(gone.flatMap((s) => s.boxes.map((b, i) => wait(i * 8).then(() => this.tweens.to(b.obj.position, { y: b.obj.position.y + 6 }, 450, (t) => t * t)))));
+      for (const s of gone) this.removeSectionObjects(s);
+      this.sections = this.sections.filter((s) => !gone.includes(s));
+      await this.applyLayout(true);
+    });
+  }
+
+  /** ALTER … DELETE: every box of every affected part is rewritten, one by one (that's the cost). */
+  mutateParts(names: string[]): Promise<void> {
+    return this.queue(async () => {
+      const hit = this.sections.filter((s) => names.includes(s.part.name));
+      for (const s of hit)
+        for (const b of s.boxes) {
+          this.setBox(b, "read");
+          b.obj.rotation.y += Math.PI;
+          await this.tweens.to(b.obj.rotation, { y: b.obj.rotation.y - Math.PI }, 120, easeInOutCubic);
+          this.options.onSound?.("land", 0);
+        }
+      for (const s of hit) this.removeSectionObjects(s);
+      this.sections = this.sections.filter((s) => !hit.includes(s));
+      await this.applyLayout(true);
+    });
+  }
+
+  /** Lightweight DELETE: the rows are masked in place; the boxes stay until a merge. */
+  maskParts(names: string[]): Promise<void> {
+    return this.queue(async () => {
+      for (const s of this.sections.filter((x) => names.includes(x.part.name))) {
+        s.masked = true;
+        s.boxes.forEach((b) => this.setBox(b, "masked"));
+      }
+      this.options.onSound?.("skip");
+    });
   }
 
   private async fly(b: Box, from: THREE.Vector3, to: THREE.Vector3, ms = 520, arc = 1.6) {
@@ -432,34 +665,23 @@ export class DepotStage {
   setLayout(layout: Layout, animate = true): Promise<void> {
     return this.queue(async () => {
       if (layout === this.layout) return;
-      const old = this.sections.map((s) => ({ ...s }));
       this.layout = layout;
       this.resetBoxStates();
-      // New section offsets in the new layout
-      let x = START_X;
+      // Racks shrink away; the new ones grow in while every box flies, column by column
       for (const s of this.sections) {
-        s.x0 = x;
-        s.width = this.sectionWidth(s.part);
-        x += s.width + SECTION_GAP;
+        for (const r of s.racks) void this.tweens.to(r.scale, { x: 0.001, y: 0.001, z: 0.001 }, animate ? 260 : 1).then(() => this.scene.remove(r));
+        s.racks = [];
       }
-      // Old racks shrink away, new ones grow in
-      for (const o of old) for (const r of o.racks) void this.tweens.to(r.scale, { x: 0.001, y: 0.001, z: 0.001 }, animate ? 260 : 1).then(() => this.scene.remove(r));
-      for (const s of this.sections) {
-        s.racks = await this.buildRacks(s.x0, s.width);
-        for (const r of s.racks) r.scale.setScalar(animate ? 0.001 : 1);
-        s.tag.position.set(s.x0 + s.width / 2, 0.05, this.frontZ - 0.55);
-      }
+      const all = new Set(this.sections.flatMap((s) => s.boxes));
+      await this.applyLayout(animate, all);
       this.applyAisleSigns(animate);
-      this.refit();
       if (!animate) {
         for (const s of this.sections) for (const b of s.boxes) b.obj.position.copy(this.boxPos(s.x0, b));
         return;
       }
       await wait(200);
-      for (const s of this.sections) s.racks.forEach((r, i) => void wait(i * 6).then(() => this.tweens.to(r.scale, { x: 1, y: 1, z: 1 }, 280, easeOutBack)));
       let i = 0;
       const flights: Promise<void>[] = [];
-      // Fly column by column so the player sees each column gather into its aisle
       for (let c = 0; c < this.columns.length; c++)
         for (const s of this.sections)
           for (const b of s.boxes.filter((bx) => bx.column === c)) {
@@ -496,11 +718,11 @@ export class DepotStage {
   private setBox(b: Box, state: BoxState) {
     if (b.state === state) return;
     b.state = state;
-    // The Kenney box is textured (colour map), so tinting can't grey it out: read and skipped
-    // boxes drop the texture for a flat, unmistakable colour
+    // The Kenney box is textured (colour map), so tinting can't grey it out: read, skipped and
+    // masked boxes drop the texture for a flat, unmistakable colour
     b.mats.forEach((m, i) => {
       m.map = state === "idle" ? b.maps[i] : null;
-      m.color.copy(state === "read" ? READ : state === "skipped" ? SKIPPED : WHITE);
+      m.color.copy(state === "read" ? READ : state === "skipped" ? SKIPPED : state === "masked" ? MASKED : WHITE);
       m.emissive.setHex(state === "read" ? COLORS.read : 0x000000);
       m.emissiveIntensity = state === "read" ? 0.18 : 0;
       m.needsUpdate = true;
@@ -508,7 +730,7 @@ export class DepotStage {
   }
 
   private resetBoxStates() {
-    for (const s of this.sections) for (const b of s.boxes) this.setBox(b, "idle");
+    for (const s of this.sections) for (const b of s.boxes) this.setBox(b, s.masked ? "masked" : "idle");
     for (const t of this.aisleTags) t.classList.remove("is-dim", "is-on");
     this.rowTag?.inner.classList.remove("is-on");
   }
@@ -518,7 +740,10 @@ export class DepotStage {
     return this.queue(async () => this.resetBoxStates());
   }
 
-  /** Pico walks only the racks holding boxes the query reads, opening only those boxes. */
+  /**
+   * Pico walks only the racks holding boxes the query reads. In each aisle the boxes the index
+   * rules out grey out in a sweep, and Pico drives straight to the ones it must open.
+   */
   playQuery(result: QueryResult): Promise<void> {
     return this.queue(async () => {
       this.resetBoxStates();
@@ -549,22 +774,25 @@ export class DepotStage {
           .sort((a, b) => a.x - b.x);
         if (!forward) cells.reverse();
         await this.travel(new THREE.Vector3(forward ? START_X - 0.6 : this.rightAisleX - 0.5, 0, this.walkZ(line)));
+        // The index rules boxes out before Pico moves: they grey out in a sweep
+        const skipped = cells.filter(({ s, b }) => !readOf(s, b));
+        skipped.forEach(({ b }, i) =>
+          void wait(i * 18).then(() => {
+            this.setBox(b, "skipped");
+            this.options.onSound?.("skip", i);
+          }),
+        );
         let k = 0;
         for (const { s, b, x } of cells) {
+          if (!readOf(s, b)) continue;
           await this.driveTo(new THREE.Vector3(x, 0, this.walkZ(line)), true);
-          if (readOf(s, b)) {
-            this.setBox(b, "read");
-            this.pico.flash(true);
-            this.options.onSound?.("read", k++);
-            const y = b.obj.position.y;
-            void this.tweens.to(b.obj.position, { y: y + 0.22 }, 110, easeOutCubic).then(() => this.tweens.to(b.obj.position, { y }, 180, easeOutBack));
-            await wait(140);
-            this.pico.flash(false);
-          } else {
-            this.setBox(b, "skipped");
-            this.options.onSound?.("skip", k);
-            await wait(40);
-          }
+          this.setBox(b, "read");
+          this.pico.flash(true);
+          this.options.onSound?.("read", k++);
+          const y = b.obj.position.y;
+          void this.tweens.to(b.obj.position, { y: y + 0.22 }, 110, easeOutCubic).then(() => this.tweens.to(b.obj.position, { y }, 180, easeOutBack));
+          await wait(140);
+          this.pico.flash(false);
         }
         await this.driveTo(new THREE.Vector3(forward ? this.rightAisleX : this.leftAisleX, 0, this.walkZ(line)), true);
         forward = !forward;
@@ -612,6 +840,7 @@ export class DepotStage {
     await this.tweens.progress(ms, (p) => this.pico.root.position.lerpVectors(from, to, p), straight ? (t) => t : easeInOutCubic);
     this.pico.speed = 0;
   }
+
 
   // ------------------------------------------------------------------ camera
 
