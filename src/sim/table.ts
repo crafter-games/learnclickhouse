@@ -48,7 +48,18 @@ export type Part = {
   dist?: KeyDistribution;
   /** Logical rows, for the small "one row per box" tables (World 5's engines). */
   data?: Row[];
+  /** Rows (indexes into data) hidden by lightweight DELETE (`_row_exists` = 0). */
+  mask?: number[];
+  /** A patch part (lightweight UPDATE): changed columns for rows of these parts, applied on read. */
+  patch?: { targets: string[] };
+  /** Disk / volume the part lives on (tiered storage). */
+  disk?: string;
 };
+
+/** One entry of system.mutations. */
+export type Mutation = { id: string; command: string; partsToDo: number; isDone: boolean; version: number; rowsRewritten: number };
+/** A part replaced by a rewrite (mutation, TTL merge): `to` = null when nothing is left. */
+export type Rewrite = { from: Part; to: Part | null };
 
 export type TableSettings = {
   /** Scaled stand-ins for the real thresholds (the level says which real numbers they represent). */
@@ -85,6 +96,8 @@ export type InsertOptions = {
   token?: string;
   /** Internal: don't emit partCreated yet (insertRows fills the rows first). */
   quiet?: boolean;
+  /** Disk / volume the new part is written to. */
+  disk?: string;
 };
 
 /** A filter on one column; `label` is how the SQL shows the value (e.g. a city name for index 2). */
@@ -122,7 +135,8 @@ export type TableEvent =
   | { type: "partitionDropped"; partition: string; parts: Part[] }
   | { type: "mutated"; sources: Part[]; results: Part[] }
   | { type: "lightweightDeleted"; parts: Part[] }
-  | { type: "queried"; spec: QuerySpec; result: QueryResult };
+  | { type: "queried"; spec: QuerySpec; result: QueryResult }
+  | { type: "rewritten"; changes: Rewrite[] };
 
 export class TooManyPartsError extends Error {
   constructor(public partition: string, public activeParts: number) {
@@ -209,6 +223,7 @@ export class Table {
   private nextBlock = 1;
   private nextMutation = 1;
   private tokens: string[] = [];
+  readonly mutations: Mutation[] = [];
 
   constructor(readonly spec: TableSpec) {}
 
@@ -258,6 +273,27 @@ export class Table {
     return this.parts.filter((p) => p.active);
   }
 
+  /** Data parts (not patches). */
+  get dataParts() {
+    return this.activeParts.filter((p) => !p.patch);
+  }
+
+  /** What a part's rows look like to a query: masked rows hidden, patches applied on read. */
+  visibleRows(p: Part): Row[] {
+    const key = this.spec.orderBy ?? [];
+    const keyOf = (r: Row) => JSON.stringify(key.map((c) => r[c]));
+    const patches = this.activeParts.filter((x) => x.patch?.targets.includes(p.name));
+    return (p.data ?? [])
+      .filter((_, i) => !p.mask?.includes(i))
+      .map((r) => {
+        let out = r;
+        for (const patch of patches)
+          for (const pr of patch.data ?? [])
+            if (keyOf(pr) === keyOf(r)) out = { ...out, ...Object.fromEntries(Object.entries(pr).filter(([c]) => !key.includes(c))) };
+        return out;
+      });
+  }
+
   get partitions() {
     return [...new Set(this.activeParts.map((p) => p.partition))];
   }
@@ -279,6 +315,7 @@ export class Table {
       granules: dist ? sortedGranules(rows, this.spec.orderBy ?? [], dist) : granulesFor(rows, options.keyRange),
       active: true,
       dist,
+      disk: options.disk,
     };
   }
 
@@ -341,7 +378,7 @@ export class Table {
     if (sources.some((p) => p.partition !== partition)) throw new Error("Parts never merge across partitions");
     sources.sort((a, b) => a.minBlock - b.minBlock);
     // Contiguous: no other active part of this partition sits between the chosen block ranges
-    const between = this.activeParts.filter(
+    const between = this.dataParts.filter(
       (p) => p.partition === partition && !sources.includes(p) && p.minBlock > sources[0].minBlock && p.maxBlock < sources[sources.length - 1].maxBlock,
     );
     if (between.length) throw new Error("Only a contiguous range of parts can be merged");
@@ -367,16 +404,20 @@ export class Table {
       dist,
     };
     if (sources.some((p) => p.data)) {
-      // Engines act here: rows with the same sorting key are replaced / summed / collapsed
-      const data = collapse(sources.flatMap((p) => p.data ?? []), this.spec.engine ?? { type: "MergeTree" }, this.spec.orderBy ?? []);
+      // Engines act here: rows with the same sorting key are replaced / summed / collapsed.
+      // Lightweight-deleted rows are dropped and patches are materialized.
+      const data = collapse(sources.flatMap((p) => this.visibleRows(p)), this.spec.engine ?? { type: "MergeTree" }, this.spec.orderBy ?? []);
       part.data = data;
       part.rows = data.length;
       part.granules = rowGranules(data, this.spec.orderBy ?? []);
     }
+    part.disk = sources[0].disk;
     for (const s of sources) {
       s.active = false;
       this.events.emit({ type: "partOutdated", part: s });
     }
+    // Patches whose targets were all merged are now part of the data
+    for (const patch of this.activeParts.filter((x) => x.patch && x.patch.targets.every((t) => sources.some((src) => src.name === t)))) patch.active = false;
     const at = this.parts.indexOf(sources[0]);
     this.parts.splice(at, 0, part);
     this.events.emit({ type: "merged", part, sources: sources.map((s) => s.name) });
@@ -391,7 +432,7 @@ export class Table {
   selectMerge(maxRun = 3): string[] | null {
     let best: { names: string[]; score: number } | null = null;
     for (const partition of this.partitions) {
-      const ps = this.activeParts.filter((p) => p.partition === partition).sort((a, b) => a.minBlock - b.minBlock);
+      const ps = this.dataParts.filter((p) => p.partition === partition).sort((a, b) => a.minBlock - b.minBlock);
       for (let i = 0; i < ps.length; i++)
         for (let len = 2; len <= Math.min(maxRun, ps.length - i); len++) {
           const run = ps.slice(i, i + len);
@@ -440,6 +481,101 @@ export class Table {
     this.cleanup();
     this.events.emit({ type: "mutated", sources: hit, results });
     return { rewritten: hit, bytes };
+  }
+
+  /** Replace parts by their rewritten versions (keeping shelf order). */
+  private applyRewrites(changes: Rewrite[]) {
+    for (const { from, to } of changes) {
+      from.active = false;
+      if (to) this.parts.splice(this.parts.indexOf(from), 0, to);
+    }
+    this.cleanup();
+    if (changes.length) this.events.emit({ type: "rewritten", changes });
+  }
+
+  /**
+   * ALTER TABLE … UPDATE / DELETE (a mutation): every part with at least one matching row is
+   * rewritten whole, and its name gets the mutation version. `transform` returns the new row, or
+   * null to delete it. Key columns can't be updated.
+   */
+  mutate(command: string, transform: (r: Row) => Row | null, updates: string[] = []): { mutation: Mutation; changes: Rewrite[] } {
+    const key = this.spec.orderBy ?? [];
+    const bad = updates.find((c) => key.includes(c));
+    if (bad) throw new Error(`Cannot UPDATE key column \`${bad}\``);
+    const version = this.nextBlock++;
+    const changes: Rewrite[] = [];
+    for (const p of this.dataParts) {
+      const before = this.visibleRows(p);
+      const after = before.map(transform);
+      if (after.every((r, i) => r !== null && JSON.stringify(r) === JSON.stringify(before[i]))) continue;
+      const data = after.filter((r): r is Row => r !== null);
+      const to: Part | null = data.length
+        ? { ...p, name: partName(p.partition, p.minBlock, p.maxBlock, p.level, version), mutation: version, data, rows: data.length, granules: rowGranules(data, key), mask: undefined, active: true }
+        : null;
+      changes.push({ from: p, to });
+    }
+    const mutation: Mutation = { id: `mutation_${version}.txt`, command, partsToDo: changes.length, isDone: changes.length === 0, version, rowsRewritten: changes.reduce((n, c) => n + c.from.rows, 0) };
+    this.mutations.push(mutation);
+    this.applyRewrites(changes);
+    return { mutation, changes };
+  }
+
+  /** Lightweight DELETE on logical rows: matching rows are masked in place, nothing is rewritten. */
+  deleteRows(match: (r: Row) => boolean): { part: Part; rows: number[] }[] {
+    const out: { part: Part; rows: number[] }[] = [];
+    for (const p of this.dataParts) {
+      const idx = (p.data ?? []).map((r, i) => (match(r) && !p.mask?.includes(i) ? i : -1)).filter((i) => i >= 0);
+      if (!idx.length) continue;
+      p.mask = [...(p.mask ?? []), ...idx];
+      out.push({ part: p, rows: idx });
+    }
+    if (out.length) this.events.emit({ type: "lightweightDeleted", parts: out.map((o) => o.part) });
+    return out;
+  }
+
+  /** Lightweight UPDATE: a small patch part with the key and the changed columns of matching rows. */
+  patchUpdate(match: (r: Row) => boolean, set: Row): Part | null {
+    const key = this.spec.orderBy ?? [];
+    const targets: string[] = [];
+    const rows: Row[] = [];
+    for (const p of this.dataParts)
+      for (const r of this.visibleRows(p))
+        if (match(r)) {
+          if (!targets.includes(p.name)) targets.push(p.name);
+          rows.push({ ...Object.fromEntries(key.map((c) => [c, r[c]])), ...set });
+        }
+    if (!rows.length) return null;
+    const block = this.nextBlock++;
+    const part: Part = { name: `patch-${partName(targets.length === 1 ? this.parts.find((x) => x.name === targets[0])!.partition : "all", block, block, 0)}`, partition: this.parts.find((x) => x.name === targets[0])!.partition, minBlock: block, maxBlock: block, level: 0, rows: rows.length, granules: rowGranules(rows, key), active: true, data: rows, patch: { targets } };
+    this.parts.push(part);
+    this.events.emit({ type: "partCreated", part });
+    return part;
+  }
+
+  /**
+   * A TTL merge at day `now`: rows whose `column` + `days` has passed are removed by rewriting their
+   * part (level + 1); a part where every row expired is dropped whole.
+   */
+  ttlMerge(now: number, column: string, days: number): Rewrite[] {
+    const changes: Rewrite[] = [];
+    for (const p of this.dataParts) {
+      const rows = this.visibleRows(p);
+      const keep = rows.filter((r) => Number(r[column]) + days > now);
+      if (keep.length === rows.length) continue;
+      const to: Part | null = keep.length
+        ? { ...p, name: partName(p.partition, p.minBlock, p.maxBlock, p.level + 1), level: p.level + 1, data: keep, rows: keep.length, granules: rowGranules(keep, this.spec.orderBy ?? []), mask: undefined, active: true }
+        : null;
+      changes.push({ from: p, to });
+    }
+    this.applyRewrites(changes);
+    return changes;
+  }
+
+  /** Move whole parts to another disk / volume (tiered storage). */
+  moveParts(names: string[], disk: string): Part[] {
+    const moved = this.activeParts.filter((p) => names.includes(p.name) && p.disk !== disk);
+    for (const p of moved) p.disk = disk;
+    return moved;
   }
 
   /** The key range a granule covers for a column, if the index knows it. */
@@ -512,8 +648,8 @@ export class Table {
       const engine = this.spec.engine ?? { type: "MergeTree" as const };
       if (spec.final)
         // FINAL merges at read time, partition by partition
-        rows = this.partitions.flatMap((pt) => collapse(this.activeParts.filter((p) => p.partition === pt).flatMap((p) => p.data ?? []), engine, this.spec.orderBy ?? [], true));
-      else rows = this.activeParts.flatMap((p) => p.data ?? []);
+        rows = this.partitions.flatMap((pt) => collapse(this.dataParts.filter((p) => p.partition === pt).flatMap((p) => this.visibleRows(p)), engine, this.spec.orderBy ?? [], true));
+      else rows = this.dataParts.flatMap((p) => this.visibleRows(p));
     }
     const explain: QueryResult["explain"] = [];
     if (spec.partitions) explain.push({ stage: "Partition", parts: [afterPartition.parts, partsTotal], granules: [afterPartition.granules, granulesTotal] });

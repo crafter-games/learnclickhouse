@@ -75,11 +75,12 @@ describe("world 1 facts", () => {
 
 describe("final exam", () => {
   it("draws 20 questions spread across every completed world", async () => {
-    const { buildExam } = await import(".");
+    const { buildExam, WORLDS } = await import(".");
     const { questions, worlds } = buildExam(ALL_LEVELS.map((l) => l.id), 7);
     expect(questions).toHaveLength(20);
-    expect(new Set(worlds).size).toBe(5);
-    for (const w of [1, 2, 3, 4, 5]) expect(worlds.filter((x) => x === w).length).toBeGreaterThanOrEqual(4);
+    const ids = WORLDS.map((w) => w.id);
+    expect(new Set(worlds).size).toBe(ids.length);
+    for (const w of ids) expect(worlds.filter((x) => x === w).length).toBeGreaterThanOrEqual(Math.floor(20 / ids.length));
   });
   it("only asks about played levels", async () => {
     const { buildExam } = await import(".");

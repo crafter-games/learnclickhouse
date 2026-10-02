@@ -1,0 +1,1 @@
+{"name":"map6","path":"/es/world","viewport":[1440,900],"steps":[{"wait":6000},{"press":"ArrowRight"},{"wait":900},{"press":"ArrowRight"},{"wait":900},{"press":"ArrowRight"},{"wait":900},{"press":"ArrowRight"},{"wait":900},{"press":"ArrowRight"},{"wait":2500},{"screenshot":"w6"}]}

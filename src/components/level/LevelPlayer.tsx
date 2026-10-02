@@ -308,6 +308,9 @@ export function LevelPlayer({ level, onRestart }: { level: Level; onRestart: () 
                 mutateParts: (n) => s.mutateParts(n),
                 maskParts: (n) => s.maskParts(n),
                 setBuffer: (r) => s.setBuffer(r),
+                rewriteParts: (c) => s.rewriteParts(c),
+                maskRows: (p, r) => s.maskRows(p, r),
+                moveParts: (n) => s.moveParts(n),
               });
               setStageReady(true);
             }}
@@ -316,9 +319,10 @@ export function LevelPlayer({ level, onRestart }: { level: Level; onRestart: () 
               part: (name) => name,
               dock: ts("dock"),
               rows: ts("rows", { table: table.spec.name }),
-              hall: (p) => ts("hall", { p }),
+              hall: (p, disk) => (disk ? ts("hallDisk", { p, disk: ts(`disk.${disk}`) }) : ts("hall", { p })),
               rejected: ts("rejected"),
               duplicate: ts("duplicate"),
+              full: ts("full"),
               buffer: (rows) => ts("buffer", { rows }),
             }}
           />
@@ -381,7 +385,7 @@ export function LevelPlayer({ level, onRestart }: { level: Level; onRestart: () 
 
             {panels && panels.length > 0 && (
               <aside ref={sideRef} className="card max-h-[26dvh] w-full overflow-y-auto px-4 py-3 lg:absolute lg:right-4 lg:top-[84px] lg:z-10 lg:max-h-[calc(100dvh-220px)] lg:w-[330px]">
-                <Panels panels={panels} table={table} last={ctx.last} format={level.format} />
+                <Panels panels={panels} table={table} last={ctx.last} format={level.format} settings={ctx.settings} />
               </aside>
             )}
           </div>

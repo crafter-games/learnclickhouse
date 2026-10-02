@@ -231,3 +231,7 @@ button, a { touch-action: manipulation; }
   white-space: nowrap;
   line-height: 1;
 }
+.part-tag--patch { background: transparent; color: var(--amber); border-style: dashed; }
+.hall-tag[data-disk="hot"] { border-color: #ffb547; }
+.hall-tag[data-disk="cold"] { border-color: #4fd1c5; }
+.hall-tag[data-disk="s3"] { border-color: #8a8cff; }

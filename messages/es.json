@@ -84,7 +84,18 @@
     "partsMeterNote": "Aquí: frena en {delay}, rechaza en {throw}. En ClickHouse real: 1000 y 3000 por partición.",
     "mark": "marca",
     "result": "Resultado del SELECT",
-    "rowCount": "{n, plural, one {# fila} other {# filas}}"
+    "rowCount": "{n, plural, one {# fila} other {# filas}}",
+    "masked": "−{n} ocultas",
+    "noMutations": "Aún no hay mutaciones.",
+    "rewritten": "Filas reescritas (total)",
+    "today": "Hoy",
+    "day": "día {n}",
+    "expired": "Filas vencidas aún guardadas",
+    "disk": {
+      "hot": "SSD (caliente)",
+      "s3": "S3 (frío)"
+    },
+    "rowsShort": "{n} filas"
   },
   "tools": {
     "insert": "Insertar pedidos",
@@ -98,7 +109,13 @@
     "hall": "PARTICIÓN {p}",
     "rejected": "RECHAZADO · demasiadas parts",
     "duplicate": "DUPLICADO · ignorado",
-    "buffer": "buffer: {rows} filas"
+    "buffer": "buffer: {rows} filas",
+    "hallDisk": "{p} · {disk}",
+    "full": "RECHAZADO · SSD lleno",
+    "disk": {
+      "hot": "SSD",
+      "s3": "S3"
+    }
   },
   "levels": {
     "1-1": {
@@ -1393,6 +1410,272 @@
           "why": "Por columna (25.6+), para upserts columna a columna."
         }
       }
+    },
+    "6-1": {
+      "title": "Mutaciones",
+      "summary": "ALTER TABLE … UPDATE/DELETE reescribe parts enteras.",
+      "brief": {
+        "title": "Las parts no cambian",
+        "body": "Las parts son <b>inmutables</b>: nadie edita una caja en su sitio. Por eso <code>ALTER TABLE … UPDATE</code> o <code>DELETE</code> es una <b>mutación</b>: en segundo plano, cada part que tenga al menos una fila afectada se <b>reescribe entera</b> como una part nueva, y su nombre lleva la versión de la mutación como sufijo. El ALTER responde al instante; <code>system.mutations</code> te dice cuándo terminó de verdad."
+      },
+      "one": {
+        "q": "El cliente 5 se muda a Cusco. Cada part tiene 3 clientes. ¿Cuántas filas reescribe la mutación?",
+        "why": "3: se reescribe la part all_2_2_0 entera, no solo la fila. La part nueva es all_2_2_0_4 (4 es la versión de la mutación)."
+      },
+      "three": {
+        "q": "Ahora tres ALTER separados, uno por los clientes 1, 2 y 3, que viven en la misma part. ¿Cuántas filas se reescriben en total?",
+        "why": "9: cada mutación vuelve a reescribir esa part de 3 filas. Un solo ALTER con WHERE id IN (1, 2, 3) la reescribiría una vez. Agrupa tus cambios."
+      },
+      "purge": {
+        "title": "Fuera los cancelados",
+        "body": "Borra con una mutación a todos los clientes con <code>plan = ''cancelled''</code>. Mira cómo baja <code>parts_to_do</code> en system.mutations y luego revisa la tabla.",
+        "delete": "ALTER TABLE … DELETE WHERE plan = 'cancelled'",
+        "select": "SELECT *",
+        "success": "Dos parts tenían un cliente cancelado, así que se reescribieron dos parts enteras. Las mutaciones son para arreglos raros y grandes, no para el día a día."
+      },
+      "check": {
+        "cost": {
+          "q": "{n} ALTER … UPDATE separados caen en la misma part de {rows} filas. ¿Cuántas filas se reescriben?",
+          "why": "{n} × {rows} = {total}: cada mutación reescribe la part otra vez."
+        },
+        "async": {
+          "q": "El ALTER respondió al instante. ¿Dónde compruebas si ya terminó?",
+          "mutations": "system.mutations (parts_to_do, is_done)",
+          "done": "En ningún lado: si respondió, ya está",
+          "parts": "Solo en system.merges",
+          "why": "Las mutaciones son asíncronas por defecto; system.mutations muestra parts_to_do e is_done."
+        },
+        "key": {
+          "q": "¿Qué pasa con ALTER TABLE … UPDATE sobre una columna del ORDER BY?",
+          "error": "Se rechaza: las columnas clave no se pueden actualizar",
+          "resort": "La part se reordena",
+          "fine": "Funciona como cualquier columna",
+          "why": "Una mutación no puede actualizar columnas clave; inserta una fila corregida."
+        },
+        "name": {
+          "q": "La mutación 4 reescribe la part all_2_2_0. Su nombre nuevo es…",
+          "suffix": "all_2_2_0_4",
+          "same": "all_2_2_0",
+          "level": "all_2_2_1",
+          "why": "Se añade la versión de la mutación; el nivel no cambia porque no es un merge."
+        }
+      }
+    },
+    "6-2": {
+      "title": "DELETE ligero",
+      "summary": "DELETE FROM oculta filas al instante; los merges las quitan después.",
+      "brief": {
+        "title": "Una máscara, no una reescritura",
+        "body": "<code>DELETE FROM</code> (GA desde 23.3) no reescribe parts. Pone una máscara oculta <code>_row_exists</code> y las filas <b>desaparecen de las consultas al instante</b>. Los datos siguen en disco: se quitan de verdad cuando la part se <b>fusiona</b>. Aquí las filas enmascaradas se ponen rosas."
+      },
+      "cost": {
+        "q": "DELETE FROM customers WHERE plan = cancelled afecta a 2 filas en 2 parts. ¿Cuántas filas se reescriben ahora mismo?",
+        "why": "0: solo cambia la máscara. Las filas quedan ocultas, no eliminadas."
+      },
+      "space": {
+        "q": "Justo después de ese DELETE, ¿cuánto espacio en disco se liberó?",
+        "none": "Nada todavía",
+        "some": "Lo que ocupaban las filas borradas",
+        "all": "Lo que ocupaban las parts tocadas",
+        "why": "Nada: las filas siguen en las parts. El espacio vuelve cuando esas parts se fusionan."
+      },
+      "clean": {
+        "title": "Borrar y recuperar espacio",
+        "body": "Borra a todos los clientes de Madrid con un DELETE ligero y luego fuerza un merge para que las filas ocultas salgan del disco de verdad.",
+        "delete": "DELETE FROM … WHERE city = 'Madrid'",
+        "optimize": "OPTIMIZE TABLE … FINAL",
+        "select": "SELECT *",
+        "success": "El DELETE ocultó las filas al instante; el merge ya no las escribió en la part nueva. En producción dejas que lo hagan los merges de fondo."
+      },
+      "check": {
+        "how": {
+          "q": "¿Cómo quita filas un DELETE ligero?",
+          "mask": "Las marca en una máscara oculta _row_exists",
+          "rewrite": "Reescribe todas las parts a la vez",
+          "tombstone": "Inserta una fila con sign −1",
+          "why": "Una máscara: las consultas se saltan esas filas y los merges las eliminan."
+        },
+        "disk": {
+          "q": "¿Cuándo salen del disco las filas borradas con DELETE ligero?",
+          "merge": "Cuando su part se fusiona",
+          "now": "Al instante",
+          "never": "Nunca",
+          "why": "En el siguiente merge de esa part."
+        },
+        "count": {
+          "q": "Una tabla tiene {total} filas. DELETE FROM oculta {gone}. ¿Qué devuelve SELECT count()?",
+          "why": "{total} − {gone} = {n}: las filas enmascaradas se filtran desde ya."
+        },
+        "best": {
+          "q": "Tienes que borrar todo el año pasado de una tabla particionada por mes. ¿Lo más barato?",
+          "drop": "DROP PARTITION, mes a mes",
+          "lightweight": "DELETE FROM … WHERE year = 2025",
+          "mutation": "ALTER TABLE … DELETE",
+          "why": "Soltar una partición elimina parts enteras: ni máscara ni reescritura."
+        }
+      }
+    },
+    "6-3": {
+      "title": "UPDATE ligero",
+      "summary": "UPDATE … SET escribe una pequeña patch part (Beta).",
+      "brief": {
+        "title": "Un parche encima",
+        "body": "Desde 25.8, <code>UPDATE … SET</code> es un <b>UPDATE ligero</b> (aún <b>Beta</b> en 26.9). En vez de reescribir parts escribe una <b>patch part</b> diminuta con solo la clave y las columnas cambiadas de las filas afectadas. Las consultas aplican el parche <b>al leer</b>, y un merge posterior lo absorbe en la part real. Pensado para cambios pequeños (hasta ~10% de la tabla)."
+      },
+      "size": {
+        "q": "UPDATE customers SET plan = pro WHERE id = 4. ¿Cuántas cajas lleva la patch part?",
+        "why": "2: una fila, con su clave (id) y la columna cambiada (plan). Nada más se copia."
+      },
+      "read": {
+        "q": "Antes de cualquier merge, ¿qué plan muestra SELECT para el cliente 4?",
+        "pro": "pro (el parche se aplica al leer)",
+        "free": "free (hasta el merge)",
+        "both": "Las dos filas",
+        "why": "El parche se aplica mientras se lee, así que el valor nuevo se ve al instante."
+      },
+      "absorb": {
+        "title": "Parchear y absorber",
+        "body": "Pasa a todos los clientes de Lima al plan <code>pro</code> con un UPDATE ligero y luego fuerza un merge para que los parches se absorban en las parts.",
+        "patch": "UPDATE … SET plan = 'pro' WHERE city = 'Lima'",
+        "optimize": "OPTIMIZE TABLE … FINAL",
+        "select": "SELECT *",
+        "success": "El parche se vio al instante y el merge lo fundió con los datos: ninguna part se reescribió solo por el cambio."
+      },
+      "check": {
+        "what": {
+          "q": "¿Qué escribe un UPDATE ligero?",
+          "patch": "Una patch part pequeña con la clave y las columnas cambiadas",
+          "rewrite": "Una copia reescrita de cada part tocada",
+          "mask": "Una máscara _row_exists",
+          "why": "Una patch part, que se aplica al leer y absorben los merges."
+        },
+        "status": {
+          "q": "¿En qué estado está el UPDATE ligero en 26.9?",
+          "beta": "Beta",
+          "ga": "GA",
+          "removed": "Eliminado",
+          "why": "Beta desde 25.8."
+        },
+        "boxes": {
+          "q": "Un UPDATE ligero cambia {changed} columna(s) en {rows} filas (clave de una columna). ¿Cuántos valores guarda el parche?",
+          "why": "{rows} × ({changed} + 1 de clave) = {n}."
+        },
+        "when": {
+          "q": "¿Cuándo deja de existir una patch part?",
+          "merge": "Cuando un merge la absorbe en los datos",
+          "never": "Nunca",
+          "select": "Tras el primer SELECT",
+          "why": "Los merges la aplican a las parts y la eliminan."
+        }
+      }
+    },
+    "6-4": {
+      "title": "TTL: datos con caducidad",
+      "summary": "Las filas vencidas se van en los merges, no en el instante en que vencen.",
+      "brief": {
+        "title": "Una regla que llega tarde",
+        "body": "<code>TTL day + INTERVAL 30 DAY</code> dice que las filas vencen 30 días después de su día. Pero nadie vigila el reloj: las filas vencidas las quita un <b>merge de TTL</b>, que corre como mucho cada <code>merge_with_ttl_timeout</code> (4 horas por defecto). Hasta entonces siguen guardadas <b>y siguen saliendo en las consultas</b>. Una part con todas sus filas vencidas se elimina entera."
+      },
+      "before": {
+        "q": "Hoy es el día 40. Las filas con día ≤ 10 ya vencieron, pero aún no corrió ningún merge de TTL. ¿Cuántas filas devuelve SELECT? (Hay 8.)",
+        "why": "8: el TTL no oculta filas; las quita cuando corre un merge."
+      },
+      "merge": {
+        "q": "Ahora corre un merge de TTL. La part 1 (días 1–3) venció entera, la part 2 (8, 25, 38) en parte y la part 3 (36, 39) está fresca. ¿Cuántas parts quedan?",
+        "why": "2: la part 1 se elimina entera, la part 2 se reescribe sin el día 8 (nivel +1) y la part 3 se queda."
+      },
+      "calendar": {
+        "title": "Al día con el calendario",
+        "body": "Avanza el calendario hasta el día 70 (cada 10 días llegan eventos nuevos) y no dejes filas vencidas guardadas.",
+        "advance": "+10 días (eventos nuevos)",
+        "ttl": "Merge de TTL",
+        "select": "SELECT *",
+        "success": "Las filas vencen según el calendario pero se van con los merges. Si necesitas que desaparezcan justo a tiempo, filtra también por fecha en tus consultas."
+      },
+      "check": {
+        "when": {
+          "q": "¿Cuándo se borran físicamente las filas vencidas?",
+          "merge": "En un merge de TTL",
+          "instant": "En el instante en que vencen",
+          "select": "La próxima vez que se leen",
+          "why": "En los merges (como mucho cada merge_with_ttl_timeout)."
+        },
+        "expires": {
+          "q": "TTL day + INTERVAL {days} DAY. Una fila del día {day} vence el día…",
+          "why": "{day} + {days} = {n}."
+        },
+        "timeout": {
+          "q": "¿Valor por defecto de merge_with_ttl_timeout?",
+          "h4": "4 horas",
+          "s1": "1 segundo",
+          "d1": "1 día",
+          "why": "14400 s = 4 horas entre merges de TTL."
+        },
+        "dropParts": {
+          "q": "Con ttl_only_drop_parts = 1, el TTL elimina…",
+          "whole": "Solo parts enteras con todas sus filas vencidas",
+          "rows": "Filas sueltas",
+          "never": "Nada",
+          "why": "Solo parts enteras: barato, y encaja con particiones por tiempo."
+        }
+      }
+    },
+    "6-5": {
+      "title": "Almacén caliente y frío",
+      "summary": "Lleva parts viejas del SSD a S3 con una storage policy y TTL.",
+      "brief": {
+        "title": "Discos, volúmenes, políticas",
+        "body": "Una <b>storage policy</b> enumera volúmenes, por ejemplo un <b>SSD</b> rápido (caliente) y <b>S3</b> (frío). <code>TTL … TO VOLUME</code> mueve <b>parts enteras</b> al siguiente volumen según envejecen, y cuando el disco caliente se llena (<code>move_factor</code> = 0.1, menos del 10% libre) también se mueven. Las consultas leen todos los volúmenes sin enterarse; lo frío solo es más lento."
+      },
+      "move": {
+        "q": "La part de enero se mueve a S3. ¿Qué pasa con sus filas?",
+        "copy": "La part se copia tal cual al otro disco",
+        "rewrite": "Las filas se reescriben y recomprimen",
+        "delete": "Las filas se borran de la tabla",
+        "why": "Los movimientos copian parts: la misma part, en otro disco."
+      },
+      "query": {
+        "q": "SELECT * FROM metrics después del movimiento: ¿qué devuelve?",
+        "all": "Todos los meses, de los dos discos",
+        "hot": "Solo los meses del SSD",
+        "error": "Un error hasta deshacer el movimiento",
+        "why": "La tabla abarca los dos volúmenes; la consulta lee ambos."
+      },
+      "months": {
+        "title": "Sitio para meses nuevos",
+        "body": "En el SSD caben {cap} parts mensuales. Recibe 3 meses nuevos sin que el SSD rechace ninguno: aplica el movimiento por TTL para mandar los meses viejos a S3.",
+        "newMonth": "Llega un mes nuevo",
+        "ttlMove": "TTL … TO VOLUME 'cold'",
+        "select": "SELECT *",
+        "success": "Los meses recientes siguen en el SSD rápido, los viejos viven en S3, que es barato, y la tabla responde por todos."
+      },
+      "check": {
+        "unit": {
+          "q": "¿Qué mueve el almacenamiento por niveles entre discos?",
+          "parts": "Parts enteras",
+          "rows": "Filas sueltas",
+          "columns": "Columnas sueltas",
+          "why": "Parts enteras (o particiones)."
+        },
+        "query": {
+          "q": "Consultar un mes que vive en S3…",
+          "transparent": "funciona igual, solo más lento",
+          "restore": "requiere restaurarlo a mano antes",
+          "lost": "es imposible",
+          "why": "Los volúmenes son transparentes para las consultas."
+        },
+        "factor": {
+          "q": "move_factor = 0.1 en un disco caliente de {size} GB: ¿por debajo de cuántos GB libres empiezan a moverse parts?",
+          "why": "El 10% de {size} = {n} GB."
+        },
+        "actions": {
+          "q": "¿Cuál de estas es una acción de TTL?",
+          "volume": "TO VOLUME (mover parts)",
+          "update": "UPDATE de una columna",
+          "index": "ADD INDEX",
+          "why": "El TTL puede hacer DELETE, mover TO DISK/VOLUME, GROUP BY (resumir) o RECOMPRESS."
+        }
+      }
     }
   },
   "map": {
@@ -1432,6 +1715,10 @@
     "w5": {
       "title": "Motores de merge",
       "body": "ReplacingMergeTree, SummingMergeTree, AggregatingMergeTree y CollapsingMergeTree: qué pasa con las filas de la misma clave cuando se fusionan las parts, y cómo leer bien antes de que pase."
+    },
+    "w6": {
+      "title": "Cambiar y expirar",
+      "body": "Mutaciones, DELETE y UPDATE ligeros, TTL y almacenamiento por niveles: cambiar o borrar datos en parts inmutables."
     }
   },
   "code": {

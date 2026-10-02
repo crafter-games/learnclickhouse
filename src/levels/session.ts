@@ -2,7 +2,7 @@ import { GRANULE_ROWS, Table, TooManyPartitionsError, TooManyPartsError, type In
 import { seeded } from "@/lib/rng";
 import type { Level, LevelCtx, StageApi, TaskStats } from "./types";
 
-const ZERO: TaskStats = { inserts: 0, queries: 0, goodQueries: 0, orderByChanges: 0, merges: 0, rejected: 0, delayed: 0, dedupHits: 0, calm: 0, flushes: 0, drops: 0, mutations: 0, lwDeletes: 0, actions: 0 };
+const ZERO: TaskStats = { inserts: 0, queries: 0, goodQueries: 0, orderByChanges: 0, merges: 0, rejected: 0, delayed: 0, dedupHits: 0, calm: 0, flushes: 0, drops: 0, mutations: 0, lwDeletes: 0, actions: 0, rewrittenRows: 0, patches: 0, ttlMerges: 0, moves: 0 };
 
 export const newSeed = () => Math.floor(Math.random() * 0xffffff);
 
@@ -26,6 +26,9 @@ function deferredStage() {
     mutateParts: call("mutateParts"),
     maskParts: call("maskParts"),
     setBuffer: (rows: number | null) => void ready.then((s) => s.setBuffer(rows)),
+    rewriteParts: call("rewriteParts"),
+    maskRows: call("maskRows"),
+    moveParts: call("moveParts"),
   } as StageApi;
   return { api, attach: resolve };
 }
@@ -46,7 +49,10 @@ export class LevelSession {
     // A deep copy: levels mutate their table (storage, ORDER BY)
     this.table = new Table(structuredClone(level.table));
     for (const i of level.initial ?? []) this.table.insert(i.rows, i.options);
-    for (const rows of level.initialRows ?? []) this.table.insertRows(rows);
+    for (const i of level.initialRows ?? []) {
+      if (Array.isArray(i)) this.table.insertRows(i);
+      else this.table.insertRows(i.rows, i.options);
+    }
     const rng = seeded(newSeed());
     const stage = this.stage.api;
     const ctx: LevelCtx = {
@@ -120,10 +126,14 @@ export class LevelSession {
       merge: async (names) => {
         const pick = names ?? this.table.selectMerge();
         if (!pick) return null;
+        const patches = this.table.activeParts.filter((p) => p.patch);
         const part = this.table.merge(pick);
         this.stats.merges++;
         this.changed();
         await stage.merge(pick, part);
+        // Patch parts fully absorbed by this merge leave the shelf
+        const absorbed = patches.filter((p) => !p.active).map((p) => p.name);
+        if (absorbed.length) await stage.dropParts(absorbed);
         // Everything cancelled out (SummingMergeTree zeros, Collapsing pairs): the part is empty
         if (part.rows === 0) {
           part.active = false;
@@ -152,6 +162,57 @@ export class LevelSession {
         this.stats.lwDeletes++;
         this.changed();
         await stage.maskParts(hit.map((p) => p.name));
+      },
+      mutate: async (command, transform, updates = []) => {
+        let out;
+        try {
+          out = this.table.mutate(command, transform, updates);
+        } catch {
+          this.stats.rejected++;
+          this.changed();
+          return null;
+        }
+        const { mutation, changes } = out;
+        this.stats.mutations++;
+        // Asynchronous, part by part: parts_to_do counts down as each part is rewritten
+        for (const c of changes) {
+          await stage.rewriteParts([{ from: c.from.name, to: c.to }]);
+          this.stats.rewrittenRows += c.from.rows;
+          mutation.partsToDo--;
+          this.changed();
+        }
+        mutation.isDone = true;
+        this.changed();
+        return mutation;
+      },
+      deleteRows: async (match) => {
+        const hit = this.table.deleteRows(match);
+        this.stats.lwDeletes++;
+        this.changed();
+        for (const h of hit) await stage.maskRows(h.part.name, h.rows);
+        return hit.reduce((n, h) => n + h.rows.length, 0);
+      },
+      patchUpdate: async (match, set) => {
+        const part = this.table.patchUpdate(match, set);
+        if (!part) return null;
+        this.stats.patches++;
+        this.changed();
+        await stage.deliver(part, { quick: true });
+        return part;
+      },
+      ttlMerge: async (column, days) => {
+        const changes = this.table.ttlMerge(Number(ctx.settings.today ?? 0), column, days);
+        this.stats.ttlMerges++;
+        this.changed();
+        if (changes.length) await stage.rewriteParts(changes.map((c) => ({ from: c.from.name, to: c.to })));
+        return changes.length;
+      },
+      moveParts: async (names, disk) => {
+        const moved = this.table.moveParts(names, disk);
+        this.stats.moves += moved.length;
+        this.changed();
+        await stage.moveParts(moved.map((p) => p.name));
+        return moved.length;
       },
       query: async (spec: QuerySpec) => {
         const result = this.table.query(spec);

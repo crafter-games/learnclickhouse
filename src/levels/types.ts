@@ -1,4 +1,4 @@
-import type { InsertOptions, KeyDistribution, Part, QueryResult, QuerySpec, Table, TableSpec, Where } from "@/sim/table";
+import type { InsertOptions, KeyDistribution, Mutation, Part, QueryResult, QuerySpec, Table, TableSpec, Where } from "@/sim/table";
 import type { Row } from "@/sim/engines";
 import type { Layout } from "@/stage/depotStage";
 import { shuffle } from "@/lib/rng";
@@ -14,7 +14,8 @@ export type Concept =
   | "parts" | "merges" | "too-many-parts" | "batching" | "async-insert" | "dedup"
   | "granules" | "sparse-index" | "key-order" | "pk-not-unique" | "explain"
   | "partitions" | "partition-pruning" | "over-partition" | "drop-partition"
-  | "replacing" | "final" | "summing" | "aggregating" | "collapsing";
+  | "replacing" | "final" | "summing" | "aggregating" | "collapsing"
+  | "mutations" | "lightweight-delete" | "lightweight-update" | "ttl" | "tiered-storage";
 
 export type Choice = { id: string; label: Msg };
 export type ChoiceInput = { type: "choice"; options: Choice[] };
@@ -28,11 +29,14 @@ export type StageApi = {
   setColumnSizes: (sizes: Record<string, number>) => Promise<void>;
   resetBoxes: () => Promise<void>;
   merge: (sources: string[], part: Part) => Promise<void>;
-  turnAway: (kind: "rejected" | "duplicate") => Promise<void>;
+  turnAway: (kind: "rejected" | "duplicate" | "full") => Promise<void>;
   dropParts: (names: string[]) => Promise<void>;
   mutateParts: (names: string[]) => Promise<void>;
   maskParts: (names: string[]) => Promise<void>;
   setBuffer: (rows: number | null) => void;
+  rewriteParts: (changes: { from: string; to: Part | null }[]) => Promise<void>;
+  maskRows: (part: string, rows: number[]) => Promise<void>;
+  moveParts: (names: string[]) => Promise<void>;
 };
 
 export type TaskStats = {
@@ -57,6 +61,12 @@ export type TaskStats = {
   lwDeletes: number;
   /** One-shot action buttons pressed. */
   actions: number;
+  /** Rows rewritten by mutations (whole parts). */
+  rewrittenRows: number;
+  /** Lightweight UPDATE patch parts written. */
+  patches: number;
+  ttlMerges: number;
+  moves: number;
 };
 
 export type Setting = string | number | boolean;
@@ -90,6 +100,19 @@ export type LevelCtx = {
   /** ALTER TABLE … DELETE: returns the bytes rewritten. */
   mutateDelete: (partition: string) => Promise<number>;
   lightweightDelete: (partition: string) => Promise<void>;
+  /**
+   * ALTER TABLE … UPDATE/DELETE on logical rows: parts with a match are rewritten one by one
+   * (system.mutations shows parts_to_do going down). Null when refused (key column).
+   */
+  mutate: (command: string, transform: (r: Row) => Row | null, updates?: string[]) => Promise<Mutation | null>;
+  /** DELETE FROM (lightweight): matching rows are masked in place. Returns how many. */
+  deleteRows: (match: (r: Row) => boolean) => Promise<number>;
+  /** UPDATE … SET (lightweight): writes a patch part. */
+  patchUpdate: (match: (r: Row) => boolean, set: Row) => Promise<Part | null>;
+  /** A TTL merge at day `settings.today`: expired rows go. Returns the parts touched. */
+  ttlMerge: (column: string, days: number) => Promise<number>;
+  /** Move whole parts to another disk. */
+  moveParts: (names: string[], disk: string) => Promise<number>;
   /** Run a query and wait until Pico has walked it. */
   query: (spec: QuerySpec) => Promise<QueryResult>;
   stage: StageApi;
@@ -130,7 +153,7 @@ export type Tool =
   | { type: "action"; id: string; label: Msg; icon?: "truck" | "repeat" | "trash" | "eraser" | "pencil" | "press" | "play"; tone?: "primary" | "accent" | "secondary" | "danger"; run: (ctx: LevelCtx) => Promise<unknown> };
 
 /** Live panels a step can show next to the stage. */
-export type Panel = "reading" | "parts" | "compression" | "partsMeter" | "index" | "explain" | "rows";
+export type Panel = "reading" | "parts" | "compression" | "partsMeter" | "index" | "explain" | "rows" | "mutations" | "ttl" | "disks";
 
 export type Step =
   | { kind: "brief"; title: Msg; body: Msg; mapping?: { icon: string; thing: Msg; real: Msg }[]; breaks?: Msg; code?: string }
@@ -166,7 +189,7 @@ export type Level = {
   /** Parts already on the shelves when the level starts. */
   initial?: { rows: number; options?: InsertOptions }[];
   /** Parts of logical rows already on the shelves (World 5 tables). */
-  initialRows?: Row[][];
+  initialRows?: (Row[] | { rows: Row[]; options: InsertOptions })[];
   /** Initial dock settings (ctx.settings). */
   settings?: Record<string, Setting>;
   /** How key values print in panels (e.g. city index → name). */

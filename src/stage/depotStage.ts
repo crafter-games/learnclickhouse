@@ -25,6 +25,8 @@ const SKIPPED = new THREE.Color(0x4b4d58);
 const MASKED = new THREE.Color(0xc0525b);
 const WHITE = new THREE.Color(0xffffff);
 const HALL_TINTS = [0x2c2f45, 0x23383a, 0x3a3226, 0x26372b, 0x3a2735];
+/** Floor tint per disk (tiered storage): hot SSD warm, cold HDD teal, S3 blue. */
+const DISK_TINTS: Record<string, number> = { hot: 0x4a3a1c, cold: 0x1f3d40, s3: 0x2a2f55 };
 /** General shot: from the front, a little to the right and above. */
 const GENERAL_DIR = new THREE.Vector3(0.24, 0.74, 1).normalize();
 
@@ -36,10 +38,12 @@ export type StageLabels = {
   dock: string;
   /** Tag of the single rack in the row layout. */
   rows: string;
-  /** Partition hall sign. */
-  hall?: (partition: string) => string;
+  /** Partition hall sign (with the disk, for tiered storage). */
+  hall?: (partition: string, disk?: string) => string;
   rejected?: string;
   duplicate?: string;
+  /** Stamp when the hot disk has no room (tiered storage). */
+  full?: string;
   buffer?: (rows: number) => string;
 };
 
@@ -63,7 +67,7 @@ type Box = {
   /** Value label (tables with logical rows: one box = one row's value). */
   label?: HTMLElement;
 };
-type Section = { part: Part; x0: number; width: number; boxes: Box[]; tag: CSS2DObject; racks: THREE.Object3D[]; masked?: boolean };
+type Section = { part: Part; x0: number; width: number; boxes: Box[]; tag: CSS2DObject; racks: THREE.Object3D[]; masked?: boolean; maskedRows?: Set<number> };
 type Hall = { tag: CSS2DObject; floor: THREE.Mesh };
 
 type Shot = { pos: THREE.Vector3; look: THREE.Vector3; off: { x: number; y: number } };
@@ -419,8 +423,14 @@ export class DepotStage {
   /** A section for a part: boxes and a name tag (racks and positions come from applyLayout). */
   private async makeSection(part: Part, boxes?: Box[]): Promise<Section> {
     const all = boxes ?? [];
-    if (!boxes) for (let g = 0; g < part.granules.length; g++) for (let c = 0; c < this.columns.length; c++) all.push(await this.makeBox(g, c));
-    const tag = label("part-tag", this.text.part(part.name));
+    if (!boxes)
+      for (let g = 0; g < part.granules.length; g++)
+        for (let c = 0; c < this.columns.length; c++) {
+          // A patch part only carries the key and the changed columns
+          if (part.patch && part.data?.[g]?.[this.columns[c].name] === undefined) continue;
+          all.push(await this.makeBox(g, c));
+        }
+    const tag = label(part.patch ? "part-tag part-tag--patch" : "part-tag", this.text.part(part.name));
     this.scene.add(tag.obj);
     const section: Section = { part, x0: NaN, width: this.sectionWidth(part), boxes: all, tag: tag.obj, racks: [] };
     this.labelBoxes(section);
@@ -484,14 +494,19 @@ export class DepotStage {
       }
     [...groups.entries()].forEach(([p, { x0, x1 }], i) => {
       let hall = this.halls.get(p);
+      const disk = this.sections.find((s) => s.part.partition === p)?.part.disk;
       if (!hall) {
-        const tag = label("hall-tag", this.text.hall?.(p) ?? p);
+        const tag = label("hall-tag", this.text.hall?.(p, disk) ?? p);
         const floor = new THREE.Mesh(new THREE.BoxGeometry(1, 0.02, 1), new THREE.MeshStandardMaterial({ color: HALL_TINTS[i % HALL_TINTS.length], roughness: 1 }));
         floor.receiveShadow = true;
         this.scene.add(tag.obj, floor);
         hall = { tag: tag.obj, floor };
         this.halls.set(p, hall);
       }
+      const tagEl = (hall.tag.element as HTMLElement).firstElementChild as HTMLElement;
+      tagEl.textContent = this.text.hall?.(p, disk) ?? p;
+      tagEl.dataset.disk = disk ?? "";
+      (hall.floor.material as THREE.MeshStandardMaterial).color.setHex(disk ? (DISK_TINTS[disk] ?? HALL_TINTS[i % HALL_TINTS.length]) : HALL_TINTS[i % HALL_TINTS.length]);
       const w = x1 - x0 + 0.9;
       const depth = this.frontZ - this.rackZ(0) + 1.2;
       hall.floor.scale.set(w, 1, depth);
@@ -549,15 +564,15 @@ export class DepotStage {
   }
 
   /** A truck comes in, gets a stamp (rejected / duplicate) and drives away with its load. */
-  turnAway(kind: "rejected" | "duplicate"): Promise<void> {
+  turnAway(kind: "rejected" | "duplicate" | "full"): Promise<void> {
     return this.queue(async () => {
       const truck = await this.driveTruckIn();
       const st = this.truckStamp!;
-      st.inner.className = `truck-stamp truck-stamp--${kind}`;
-      st.inner.textContent = (kind === "rejected" ? this.text.rejected : this.text.duplicate) ?? kind;
+      st.inner.className = `truck-stamp truck-stamp--${kind === "full" ? "rejected" : kind}`;
+      st.inner.textContent = (kind === "rejected" ? this.text.rejected : kind === "full" ? this.text.full : this.text.duplicate) ?? kind;
       st.obj.position.copy(truck.position).add(new THREE.Vector3(0, 2.1, 0));
       (st.obj.element as HTMLElement).style.visibility = "visible";
-      this.options.onSound?.(kind === "rejected" ? "reject" : "drop");
+      this.options.onSound?.(kind === "duplicate" ? "drop" : "reject");
       await wait(900);
       (st.obj.element as HTMLElement).style.visibility = "hidden";
       await this.driveTruckOut(truck);
@@ -657,6 +672,58 @@ export class DepotStage {
         s.boxes.forEach((b) => this.setBox(b, "masked"));
       }
       this.options.onSound?.("skip");
+    });
+  }
+
+  /**
+   * A mutation or TTL merge: every box of each affected part is rewritten one by one (that's the
+   * cost), then the section becomes the new part (or disappears when nothing is left).
+   */
+  rewriteParts(changes: { from: string; to: Part | null }[]): Promise<void> {
+    return this.queue(async () => {
+      for (const { from, to } of changes) {
+        const s = this.sections.find((x) => x.part.name === from);
+        if (!s) continue;
+        for (const b of s.boxes) {
+          this.setBox(b, "read");
+          b.obj.rotation.y += Math.PI;
+          await this.tweens.to(b.obj.rotation, { y: b.obj.rotation.y - Math.PI }, this.reduced ? 40 : 110, easeInOutCubic);
+          this.options.onSound?.("land", 0);
+        }
+        this.removeSectionObjects(s);
+        this.sections = this.sections.filter((x) => x !== s);
+        if (to) {
+          const fresh = await this.makeSection(to);
+          (fresh.tag.element as HTMLElement).firstElementChild?.classList.add("is-new");
+          this.sections.push(fresh);
+          this.sortSections();
+          this.options.onSound?.("seal");
+        } else this.options.onSound?.("drop");
+        await this.applyLayout(true);
+      }
+    });
+  }
+
+  /** Lightweight DELETE on rows: those rows' boxes turn pink in place. */
+  maskRows(partName: string, rows: number[]): Promise<void> {
+    return this.queue(async () => {
+      const s = this.sections.find((x) => x.part.name === partName);
+      if (!s) return;
+      s.maskedRows = new Set([...(s.maskedRows ?? []), ...rows]);
+      for (const b of s.boxes) if (s.maskedRows.has(b.granule)) this.setBox(b, "masked");
+      this.options.onSound?.("skip");
+    });
+  }
+
+  /** Tiered storage: parts slide to another disk (their hall retints and its sign changes). */
+  moveParts(names: string[]): Promise<void> {
+    return this.queue(async () => {
+      const moving = this.sections.filter((s) => names.includes(s.part.name));
+      if (!moving.length) return;
+      this.options.onSound?.("drop");
+      await Promise.all(moving.flatMap((s) => s.boxes.map((b) => this.tweens.to(b.obj.position, { y: b.obj.position.y + 0.8 }, 220, easeOutCubic))));
+      this.updateHalls();
+      await Promise.all(moving.flatMap((s) => s.boxes.map((b) => this.tweens.to(b.obj.position, { y: RACK_Y }, 300, easeOutBack))));
     });
   }
 
@@ -772,7 +839,7 @@ export class DepotStage {
   }
 
   private resetBoxStates() {
-    for (const s of this.sections) for (const b of s.boxes) this.setBox(b, s.masked ? "masked" : "idle");
+    for (const s of this.sections) for (const b of s.boxes) this.setBox(b, s.masked || s.maskedRows?.has(b.granule) ? "masked" : "idle");
     for (const t of this.aisleTags) t.classList.remove("is-dim", "is-on");
     this.rowTag?.inner.classList.remove("is-on");
   }

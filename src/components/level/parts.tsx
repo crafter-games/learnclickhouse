@@ -3,8 +3,8 @@
 import { useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { motion } from "motion/react";
-import { Check, Eye, Package, Robot, Stack, Tag, Warehouse, X, ArrowsDownUp, Database, Rows, Truck, type Icon } from "@phosphor-icons/react";
-import type { Input, Msg, Panel } from "@/levels/types";
+import { Check, Eye, Package, Robot, Stack, Tag, Warehouse, X, ArrowsDownUp, Database, Rows, Truck, Gear, Clock, HardDrives, type Icon } from "@phosphor-icons/react";
+import type { Input, Msg, Panel, Setting } from "@/levels/types";
 import type { QueryResult, QuerySpec, Table } from "@/sim/table";
 import { COLUMN_COLORS } from "@/stage/theme";
 import { gameButtonClass } from "../ui/GameButton";
@@ -265,9 +265,12 @@ export function PartsPanel({ table }: { table: Table }) {
       </p>
       <ul className="space-y-1">
         {table.activeParts.map((p) => (
-          <li key={p.name} className="flex justify-between font-mono text-sm">
-            <span className="rounded bg-amber px-1.5 font-bold text-on-amber">{p.name}</span>
-            <span className="text-ink-2">{t("rows", { rows: new Intl.NumberFormat(locale).format(p.rows) })}</span>
+          <li key={p.name} className="flex items-center justify-between gap-2 font-mono text-sm">
+            <span className={p.patch ? "rounded border border-dashed border-amber px-1.5 font-bold text-amber" : "rounded bg-amber px-1.5 font-bold text-on-amber"}>{p.name}</span>
+            <span className="text-right text-ink-2">
+              {t("rows", { rows: new Intl.NumberFormat(locale).format(p.rows) })}
+              {p.mask?.length ? <span className="ml-1.5 font-bold text-danger">{t("masked", { n: p.mask.length })}</span> : null}
+            </span>
           </li>
         ))}
       </ul>
@@ -456,7 +459,101 @@ export function RowsPanel({ table, last }: { table: Table; last: Last }) {
   );
 }
 
-export function Panels({ panels, table, last, format }: { panels: Panel[]; table: Table; last: Last; format?: Record<string, (v: number) => string> }) {
+/** system.mutations: each ALTER … UPDATE/DELETE, its parts_to_do counting down. */
+export function MutationsPanel({ table }: { table: Table }) {
+  const rewritten = table.mutations.reduce((n, m) => n + m.rowsRewritten, 0);
+  const t = useTranslations("panels");
+  return (
+    <div>
+      <p className={panelTitle}>
+        <Gear weight="bold" /> system.mutations
+      </p>
+      {!table.mutations.length ? (
+        <p className="text-base leading-snug text-ink-2">{t("noMutations")}</p>
+      ) : (
+        <ul className="space-y-2">
+          {table.mutations.slice(-3).map((m) => (
+            <li key={m.id} className="rounded-lg border border-white/10 bg-black/40 px-2.5 py-1.5">
+              <p className="font-mono text-[12px] leading-snug text-amber">{m.command}</p>
+              <p className="mt-1 flex justify-between font-mono text-xs">
+                <span className="text-ink-2">parts_to_do = <b className="text-ink">{m.partsToDo}</b></span>
+                <span className="text-ink-2">{t("rowsShort", { n: m.rowsRewritten })}</span>
+                <span className={m.isDone ? "font-bold text-read" : "font-bold text-amber"}>is_done = {m.isDone ? 1 : 0}</span>
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-2 flex items-baseline justify-between text-sm text-ink-2">
+        {t("rewritten")} <span key={rewritten} className="animate-bump font-display text-xl font-extrabold text-ink">{rewritten}</span>
+      </p>
+    </div>
+  );
+}
+
+/** The depot's calendar for TTL: today, the rule, and rows already expired but still stored. */
+export function TtlPanel({ table, settings }: { table: Table; settings: Record<string, Setting> }) {
+  const t = useTranslations("panels");
+  const today = Number(settings.today ?? 0);
+  const column = String(settings.ttlColumn ?? "day");
+  const days = Number(settings.ttlDays ?? 30);
+  const expired = table.dataParts.reduce((n, p) => n + table.visibleRows(p).filter((r) => Number(r[column]) + days <= today).length, 0);
+  return (
+    <div>
+      <p className={panelTitle}>
+        <Clock weight="bold" /> TTL
+      </p>
+      <p className="flex items-baseline justify-between">
+        <span className="text-ink-2">{t("today")}</span>
+        <span key={today} className="animate-bump font-display text-3xl font-extrabold text-amber">{t("day", { n: today })}</span>
+      </p>
+      <p className="mt-1 rounded-lg bg-black/40 px-2.5 py-1 font-mono text-[12px] text-amber">TTL {column} + INTERVAL {days} DAY</p>
+      <p className="mt-2 flex items-baseline justify-between text-sm">
+        <span className="text-ink-2">{t("expired")}</span>
+        <span key={expired} className={`animate-bump font-display text-xl font-extrabold ${expired ? "text-danger" : "text-read"}`}>{expired}</span>
+      </p>
+    </div>
+  );
+}
+
+/** Disks of the storage policy: parts on each, with a capacity bar for the hot SSD. */
+export function DisksPanel({ table, settings }: { table: Table; settings: Record<string, Setting> }) {
+  const t = useTranslations("panels");
+  const cap = Number(settings.hotCapacity ?? 4);
+  const disks = ["hot", "s3"];
+  return (
+    <div>
+      <p className={panelTitle}>
+        <HardDrives weight="bold" /> system.disks
+      </p>
+      <ul className="space-y-2.5">
+        {disks.map((d) => {
+          const parts = table.dataParts.filter((p) => (p.disk ?? "hot") === d);
+          const full = d === "hot" && parts.length >= cap;
+          return (
+            <li key={d}>
+              <div className="flex items-baseline justify-between text-sm">
+                <span className="font-bold">{t(`disk.${d}`)}</span>
+                <span key={parts.length} className={`animate-bump font-display text-xl font-extrabold ${full ? "text-danger" : "text-ink"}`}>
+                  {parts.length}
+                  {d === "hot" && <span className="text-sm text-ink-2"> / {cap}</span>}
+                </span>
+              </div>
+              {d === "hot" && (
+                <div className="mt-1 h-3 overflow-hidden rounded-full bg-paper-2">
+                  <motion.div className={`h-full rounded-full ${full ? "bg-danger" : "bg-amber"}`} animate={{ width: `${Math.min(100, (parts.length / cap) * 100)}%` }} />
+                </div>
+              )}
+              <p className="mt-0.5 font-mono text-xs text-ink-2">{parts.map((p) => p.partition).join(" · ") || "—"}</p>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+export function Panels({ panels, table, last, format, settings = {} }: { panels: Panel[]; table: Table; last: Last; format?: Record<string, (v: number) => string>; settings?: Record<string, Setting> }) {
   return (
     <div className="space-y-4">
       {panels.map((p) =>
@@ -466,6 +563,9 @@ export function Panels({ panels, table, last, format }: { panels: Panel[]; table
         : p === "index" ? <IndexPanel key={p} table={table} last={last} format={format} />
         : p === "explain" ? <ExplainPanel key={p} last={last} />
         : p === "rows" ? <RowsPanel key={p} table={table} last={last} />
+        : p === "mutations" ? <MutationsPanel key={p} table={table} />
+        : p === "ttl" ? <TtlPanel key={p} table={table} settings={settings} />
+        : p === "disks" ? <DisksPanel key={p} table={table} settings={settings} />
         : <CompressionPanel key={p} table={table} />,
       )}
     </div>
