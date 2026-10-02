@@ -459,6 +459,51 @@ export function RowsPanel({ table, last }: { table: Table; last: Last }) {
   );
 }
 
+/** system.query_log for the last query: rows, bytes, duration (granules per thread) and memory. */
+export function QueryLogPanel({ last, settings }: { last: Last; settings: Record<string, Setting> }) {
+  const t = useTranslations("panels");
+  const locale = useLocale();
+  const bytes = useBytes();
+  const r = last?.result;
+  const threads = Number(settings.threads ?? 1);
+  const nf = new Intl.NumberFormat(locale);
+  const ms = r ? Math.ceil(r.granulesRead / threads) * 40 + Number(settings.extraMs ?? 0) : 0;
+  const memory = Number(settings.memory ?? 0);
+  const limit = Number(settings.memoryLimit ?? 0);
+  const rows: [string, string, boolean?][] = r
+    ? [
+        ["read_rows", nf.format(r.rowsRead)],
+        ["read_bytes", bytes(r.bytesRead)],
+        ["query_duration_ms", nf.format(ms)],
+        ...(memory ? ([["memory_usage", bytes(memory), limit > 0 && memory > limit]] as [string, string, boolean][]) : []),
+      ]
+    : [];
+  return (
+    <div>
+      <p className={panelTitle}>
+        <Database weight="bold" /> system.query_log
+      </p>
+      {!r ? (
+        <p className="text-base leading-snug text-ink-2">{t("noQuery")}</p>
+      ) : (
+        <ul className="space-y-1 font-mono text-sm">
+          {rows.map(([k, v, bad]) => (
+            <li key={k} className="flex justify-between">
+              <span className="text-ink-2">{k}</span>
+              <span key={v} className={`animate-bump font-bold ${bad ? "text-danger" : "text-ink"}`}>{v}</span>
+            </li>
+          ))}
+          <li className="flex justify-between">
+            <span className="text-ink-2">max_threads</span>
+            <span className="font-bold text-amber">{threads}</span>
+          </li>
+        </ul>
+      )}
+      {limit > 0 && memory > limit && <p className="mt-2 text-sm font-bold text-danger">{t("spilled")}</p>}
+    </div>
+  );
+}
+
 /** The skip index of the last query: one cell per index block and part (skipped, read, false positive). */
 export function SkipIndexPanel({ table, last }: { table: Table; last: Last }) {
   const t = useTranslations("panels");
@@ -651,6 +696,7 @@ export function Panels({ panels, table, last, format, settings = {} }: { panels:
         : p === "disks" ? <DisksPanel key={p} table={table} settings={settings} />
         : p === "skipIndex" ? <SkipIndexPanel key={p} table={table} last={last} />
         : p === "cache" ? <CachePanel key={p} table={table} last={last} />
+        : p === "queryLog" ? <QueryLogPanel key={p} last={last} settings={settings} />
         : <CompressionPanel key={p} table={table} />,
       )}
     </div>

@@ -23,6 +23,8 @@ export type ColumnSpec = {
   distinct?: number;
   /** Hidden column of this projection (drawn as its own aisle, read only through the projection). */
   projection?: string;
+  /** Only parts of these partitions have this column (several tables sharing one depot). */
+  only?: string[];
   /** Uncompressed bytes per row and compression ratios (sorted = the table is ordered by this column). */
   raw?: number;
   ratio?: { sorted: number; unsorted: number };
@@ -93,6 +95,10 @@ export type TableSettings = {
   maxMergeRows?: number;
   /** use_query_condition_cache (on by default since 25.4). */
   conditionCache?: boolean;
+  /** optimize_move_to_prewhere (default on): filter columns first, the rest only where rows match. */
+  prewhere?: boolean;
+  /** query_plan_optimize_lazy_materialization (on since 25.4): ORDER BY … LIMIT reads wide columns last. */
+  lazyMaterialization?: boolean;
 };
 
 export type TableSpec = {
@@ -109,6 +115,11 @@ export type TableSpec = {
   settings?: TableSettings;
   indexes?: SkipIndex[];
   projections?: Projection[];
+  /**
+   * A different engine per partition. Levels with two tables in one depot (source and MV target)
+   * use one partition per table.
+   */
+  partitionEngines?: Record<string, Engine>;
 };
 
 export type InsertOptions = {
@@ -130,7 +141,7 @@ export type InsertOptions = {
 /** A filter on one column; `label` is how the SQL shows the value (e.g. a city name for index 2). */
 export type Where = { column: string; min: number; max: number; label?: string };
 /** `partitions`: the partitions a filter on the partition key leaves (minmax pruning); unset = all. */
-export type QuerySpec = { columns: string[]; where?: Where; partitions?: string[]; final?: boolean };
+export type QuerySpec = { columns: string[]; where?: Where; partitions?: string[]; final?: boolean; orderLimit?: { column: string; n: number } };
 
 /** One box on the shelf: a granule of one column of one part. */
 export type BoxRead = { part: string; granule: number; column: string; read: boolean };
@@ -313,6 +324,11 @@ export class Table {
     return this.columns.map((c) => ({ name: c.name, raw: rows * (c.raw ?? c.bytesPerRow), compressed: rows * this.bytesPerRow(c) }));
   }
 
+  /** The engine that applies in a partition. */
+  engineOf(partition: string): Engine {
+    return this.spec.partitionEngines?.[partition] ?? this.spec.engine ?? { type: "MergeTree" };
+  }
+
   get activeParts() {
     return this.parts.filter((p) => p.active);
   }
@@ -453,7 +469,7 @@ export class Table {
     if (sources.some((p) => p.data)) {
       // Engines act here: rows with the same sorting key are replaced / summed / collapsed.
       // Lightweight-deleted rows are dropped and patches are materialized.
-      const data = collapse(sources.flatMap((p) => this.visibleRows(p)), this.spec.engine ?? { type: "MergeTree" }, this.spec.orderBy ?? []);
+      const data = collapse(sources.flatMap((p) => this.visibleRows(p)), this.engineOf(partition), this.spec.orderBy ?? []);
       part.data = data;
       part.rows = data.length;
       part.granules = rowGranules(data, this.spec.orderBy ?? []);
@@ -747,6 +763,23 @@ export class Table {
     const skip: NonNullable<QueryResult["skip"]> | undefined = idx ? { index: idx.name, parts: [] } : undefined;
     let usedProjection = false;
     const count = (xs: boolean[]) => xs.filter(Boolean).length;
+    const prewhere = !!w && this.spec.settings?.prewhere !== false;
+    // Lazy materialization: for ORDER BY x LIMIT n, only the granules that can hold the top n rows
+    // need the other columns (the sort column is read first)
+    const ol = spec.orderLimit;
+    let top: Set<string> | undefined;
+    if (ol && this.spec.settings?.lazyMaterialization !== false) {
+      const cands = this.activeParts.flatMap((p) => p.granules.map((g, i) => ({ key: `${p.name}/${i}`, max: g.cols?.[ol.column]?.max ?? Infinity, rows: g.rows })));
+      cands.sort((a, b) => b.max - a.max);
+      top = new Set();
+      let rowsSoFar = 0;
+      for (const c of cands) {
+        if (rowsSoFar >= ol.n) break;
+        top.add(c.key);
+        rowsSoFar += c.rows;
+      }
+    }
+    if (ol) wanted.add(ol.column);
     for (const part of this.activeParts) {
       const pruned = spec.partitions !== undefined && !spec.partitions.includes(part.partition);
       if (!pruned) afterPartition = { parts: afterPartition.parts + 1, granules: afterPartition.granules + part.granules.length };
@@ -791,8 +824,13 @@ export class Table {
         // alone: every value of the row sits in the same box.
         for (const col of this.columns) {
           if (col.projection && !part.projections?.[col.projection]) continue;
+          if (col.only && !col.only.includes(part.partition)) continue;
           const name = col.projection ? col.name.slice(col.projection.length + 1) : col.name;
-          const read = col.projection ? viaProj && col.projection === proj!.name && reads[i] && wanted.has(name) : !viaProj && reads[i] && (rowStore || wanted.has(col.name));
+          // PREWHERE: a non-filter column is only read where the filter can match; lazy
+          // materialization: only in the granules that can hold the top rows
+          const early = col.name === w?.column || col.name === ol?.column;
+          const late = (!prewhere || this.mayMatch(g.cols?.[w!.column], w!)) && (!top || top.has(`${part.name}/${i}`));
+          const read = col.projection ? viaProj && col.projection === proj!.name && reads[i] && wanted.has(name) : !viaProj && reads[i] && (rowStore || wanted.has(col.name)) && (rowStore || early || late);
           const bytes = g.rows * this.bytesPerRow(col);
           bytesTotal += bytes;
           if (read) bytesRead += bytes;
@@ -803,11 +841,11 @@ export class Table {
     const partsTotal = this.activeParts.length;
     let rows: Row[] | undefined;
     if (this.activeParts.some((p) => p.data)) {
-      const engine = this.spec.engine ?? { type: "MergeTree" as const };
+      const scope = this.dataParts.filter((p) => !spec.partitions || spec.partitions.includes(p.partition));
       if (spec.final)
         // FINAL merges at read time, partition by partition
-        rows = this.partitions.flatMap((pt) => collapse(this.dataParts.filter((p) => p.partition === pt).flatMap((p) => this.visibleRows(p)), engine, this.spec.orderBy ?? [], true));
-      else rows = this.dataParts.flatMap((p) => this.visibleRows(p));
+        rows = this.partitions.flatMap((pt) => collapse(scope.filter((p) => p.partition === pt).flatMap((p) => this.visibleRows(p)), this.engineOf(pt), this.spec.orderBy ?? [], true));
+      else rows = scope.flatMap((p) => this.visibleRows(p));
     }
     const explain: QueryResult["explain"] = [];
     if (spec.partitions) explain.push({ stage: "Partition", parts: [afterPartition.parts, partsTotal], granules: [afterPartition.granules, granulesTotal] });

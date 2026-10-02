@@ -16,7 +16,9 @@ export type Concept =
   | "partitions" | "partition-pruning" | "over-partition" | "drop-partition"
   | "replacing" | "final" | "summing" | "aggregating" | "collapsing"
   | "mutations" | "lightweight-delete" | "lightweight-update" | "ttl" | "tiered-storage"
-  | "skip-index" | "bloom-filter" | "index-granularity" | "projections" | "condition-cache";
+  | "skip-index" | "bloom-filter" | "index-granularity" | "projections" | "condition-cache"
+  | "mv-trigger" | "mv-backfill" | "mv-partial" | "mv-join" | "refreshable-mv" | "kafka-engine"
+  | "parallelism" | "prewhere" | "lazy-materialization" | "hash-join" | "dictionaries";
 
 export type Choice = { id: string; label: Msg };
 export type ChoiceInput = { type: "choice"; options: Choice[] };
@@ -25,7 +27,8 @@ export type Input = ChoiceInput | { type: "number" };
 /** What the stage can do for a level script (all awaitable: they resolve when the animation ends). */
 export type StageApi = {
   deliver: (part: Part, opts?: { quick?: boolean }) => Promise<void>;
-  playQuery: (result: QueryResult) => Promise<void>;
+  /** `threads`: max_threads, one Pico per thread. */
+  playQuery: (result: QueryResult, opts?: { threads?: number }) => Promise<void>;
   setLayout: (layout: Layout) => Promise<void>;
   setColumnSizes: (sizes: Record<string, number>) => Promise<void>;
   resetBoxes: () => Promise<void>;
@@ -89,7 +92,7 @@ export type LevelCtx = {
    */
   insert: (rows: number, options?: InsertOptions & { quick?: boolean }) => Promise<Part | null>;
   /** INSERT of logical rows (World 5 tables: one box per row). */
-  insertRows: (rows: Row[], options?: InsertOptions) => Promise<Part | null>;
+  insertRows: (rows: Row[], options?: InsertOptions & { quick?: boolean }) => Promise<Part | null>;
   /** Run a query and show `sql` + `rows` (e.g. an aggregate computed from the rows) in the rows panel. */
   show: (spec: QuerySpec, sql: string, transform?: (rows: Row[]) => Row[]) => Promise<QueryResult>;
   /** One INSERT spanning partitions: one part per partition (or null if rejected). */
@@ -157,7 +160,7 @@ export type Tool =
   | { type: "action"; id: string; label: Msg; icon?: "truck" | "repeat" | "trash" | "eraser" | "pencil" | "press" | "play"; tone?: "primary" | "accent" | "secondary" | "danger"; run: (ctx: LevelCtx) => Promise<unknown> };
 
 /** Live panels a step can show next to the stage. */
-export type Panel = "reading" | "parts" | "compression" | "partsMeter" | "index" | "explain" | "rows" | "mutations" | "ttl" | "disks" | "skipIndex" | "cache";
+export type Panel = "reading" | "parts" | "compression" | "partsMeter" | "index" | "explain" | "rows" | "mutations" | "ttl" | "disks" | "skipIndex" | "cache" | "queryLog";
 
 export type Step =
   | { kind: "brief"; title: Msg; body: Msg; mapping?: { icon: string; thing: Msg; real: Msg }[]; breaks?: Msg; code?: string }
@@ -194,6 +197,10 @@ export type Level = {
   initial?: { rows: number; options?: InsertOptions }[];
   /** Parts of logical rows already on the shelves (World 5 tables). */
   initialRows?: (Row[] | { rows: Row[]; options: InsertOptions })[];
+  /** Partitions that stand for whole tables: their hall sign is `levels.<id>.halls.<partition>`. */
+  halls?: string[];
+  /** Message key (levels namespace, value {rows}) for the hopper sign, e.g. a Kafka topic. */
+  bufferLabel?: string;
   /** Runs on the fresh table after the initial parts (e.g. ADD PROJECTION that old parts lack). */
   setup?: (table: Table) => void;
   /** Initial dock settings (ctx.settings). */

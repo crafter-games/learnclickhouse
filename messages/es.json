@@ -1960,6 +1960,303 @@
           "why": "Las entradas son por part; una part nueva empieza vacía."
         }
       }
+    },
+    "8-1": {
+      "title": "Un trigger de inserts",
+      "summary": "Una MV incremental ejecuta su SELECT en cada bloque insertado, y nada más.",
+      "halls": {
+        "src": "page_views · origen",
+        "mv": "views_per_page · destino"
+      },
+      "brief": {
+        "title": "No es una consulta cacheada",
+        "body": "Una <b>vista materializada</b> incremental es “solo un <b>trigger</b> que ejecuta una consulta sobre los bloques de datos a medida que se insertan”. Ve <b>solo el bloque insertado</b> y escribe el resultado <code>TO</code> una tabla destino que es tuya. Nunca relee el origen: las filas viejas, los updates, deletes y drops en el origen no cambian nada en el destino."
+      },
+      "empty": {
+        "q": "La MV se acaba de crear; page_views ya tiene 3 filas. ¿Cuántas filas tiene views_per_page?",
+        "why": "0: crear una MV no procesa las filas que ya estaban."
+      },
+      "fires": {
+        "q": "INSERT INTO page_views de dos visitas (página 1 y página 3). ¿Cuántas filas llegan a views_per_page?",
+        "why": "2: la MV ejecutó count() GROUP BY page solo sobre ese bloque: una fila para la página 1 y otra para la 3."
+      },
+      "backfill": {
+        "title": "Rellena la historia",
+        "body": "Al destino le faltan las 3 visitas de antes de crear la MV. Haz el backfill para que sum(views) por página coincida con page_views, sin contar nada dos veces, y compruébalo.",
+        "all": "INSERT … SELECT (todas las filas)",
+        "old": "INSERT … SELECT WHERE ts < creación de la MV",
+        "truncate": "TRUNCATE views_per_page",
+        "check": "SELECT page, sum(views) … GROUP BY page",
+        "success": "El backfill se hace con INSERT INTO destino SELECT, limitado a las filas de antes de la MV (o vaciando el destino y rellenándolo todo). Las filas insertadas después de la MV ya están en el destino."
+      },
+      "check": {
+        "what": {
+          "q": "Una vista materializada incremental es…",
+          "trigger": "Un trigger que transforma cada bloque insertado",
+          "cache": "Un resultado cacheado que se mantiene sincronizado",
+          "view": "Una vista normal que se calcula en cada SELECT",
+          "why": "Un trigger sobre los inserts en el origen."
+        },
+        "history": {
+          "q": "CREATE MATERIALIZED VIEW sobre una tabla que ya tiene datos procesa…",
+          "nothing": "Ninguna de las filas existentes",
+          "all": "Todas las filas existentes",
+          "recent": "La última hora",
+          "why": "Nada viejo: el backfill se hace con INSERT INTO destino SELECT."
+        },
+        "block": {
+          "q": "Un INSERT de {rows} filas con {pages} páginas distintas dispara una MV con count() GROUP BY page. ¿Cuántas filas escribe?",
+          "why": "{pages}: una por página de ese bloque."
+        },
+        "delete": {
+          "q": "Borras filas de la tabla origen. El destino de la MV…",
+          "unchanged": "Se queda igual",
+          "updated": "También se actualiza",
+          "error": "Da un error",
+          "why": "Las MVs solo reaccionan a los inserts."
+        }
+      }
+    },
+    "8-2": {
+      "title": "Filas parciales",
+      "summary": "Un destino SummingMergeTree guarda una fila por insert hasta que los merges se ponen al día.",
+      "halls": {
+        "src": "page_views · origen",
+        "mv": "views_per_page · destino"
+      },
+      "brief": {
+        "title": "Una fila por bloque y por clave",
+        "body": "Cada INSERT dispara la MV, y cada disparo escribe sus propias filas. Con un destino <b>SummingMergeTree</b>, las filas de una misma página solo se suman cuando las parts se <b>fusionan</b>. Mientras tanto el destino guarda <b>varias filas parciales por clave</b>. Por eso siempre se lee con <code>sum(views) … GROUP BY page</code>."
+      },
+      "partials": {
+        "q": "Tres INSERT separados, cada uno con una visita a la página 1. ¿Cuántas filas de la página 1 muestra SELECT * FROM views_per_page?",
+        "why": "4: la fila vieja más una fila parcial por INSERT. Se sumarán cuando se fusionen las parts, en un momento que nadie elige."
+      },
+      "sum": {
+        "q": "SELECT page, sum(views) … GROUP BY page. ¿Qué muestra la página 1?",
+        "why": "4: el GROUP BY suma las filas parciales, así que la respuesta es correcta antes y después de los merges."
+      },
+      "read": {
+        "title": "Léelo bien",
+        "body": "Manda otro lote de visitas y saca los totales correctos por página mientras el destino todavía tiene filas parciales.",
+        "insert": "INSERT de un lote de visitas",
+        "star": "SELECT *",
+        "sum": "SELECT page, sum(views) … GROUP BY page",
+        "success": "SELECT * enseña filas parciales; sum() GROUP BY acierta siempre. No cuentes con que los merges ya hayan pasado."
+      },
+      "check": {
+        "rows": {
+          "q": "Antes de los merges, ¿cuántas filas por clave puede tener un destino SummingMergeTree?",
+          "several": "Varias filas parciales",
+          "one": "Siempre exactamente una",
+          "zero": "Ninguna hasta el merge",
+          "why": "Una por insert (por part) hasta que los merges las suman."
+        },
+        "query": {
+          "q": "¿Cómo lees los totales de ese destino?",
+          "sum": "sum(views) … GROUP BY clave",
+          "star": "SELECT *",
+          "count": "count()",
+          "why": "Agregando otra vez: las filas parciales se suman."
+        },
+        "inserts": {
+          "q": "{n} INSERT tocan la misma página y no ha corrido ningún merge. ¿Cuántas filas de esa página hay en el destino?",
+          "why": "{n}: una por insert."
+        },
+        "engine": {
+          "q": "¿Un buen motor destino para una MV que cuenta por clave?",
+          "summing": "SummingMergeTree (o AggregatingMergeTree)",
+          "plain": "Un MergeTree normal con una fila por clave",
+          "replacing": "ReplacingMergeTree",
+          "why": "Summing o Aggregating, para que los merges combinen las filas parciales."
+        }
+      }
+    },
+    "8-3": {
+      "title": "Los JOIN disparan por la izquierda",
+      "summary": "Una MV con JOIN solo reacciona a la tabla de la izquierda.",
+      "halls": {
+        "src": "page_views · origen",
+        "dim": "pages · dimensión",
+        "mv": "views_by_section · destino"
+      },
+      "brief": {
+        "title": "La dimensión solo se consulta",
+        "body": "Esta MV cruza cada bloque nuevo de <code>page_views</code> con <code>pages</code> para sacar la sección. Solo se dispara con <b>inserts en la tabla de más a la izquierda</b>. Cambiar <code>pages</code> no toca las filas que ya están en el destino: la historia conserva la sección vieja."
+      },
+      "dim": {
+        "q": "La página 1 pasa de news a tech (INSERT INTO pages). ¿Cambia views_by_section?",
+        "no": "No",
+        "yes": "Sí, las filas de la página 1 pasan a tech",
+        "later": "Sí, en el siguiente merge",
+        "why": "No: los inserts en la tabla de la derecha no disparan la MV."
+      },
+      "next": {
+        "q": "Llega una visita nueva a la página 1. ¿Bajo qué sección la escribe la MV?",
+        "tech": "tech",
+        "news": "news",
+        "both": "Las dos",
+        "why": "tech: el JOIN corre en el momento del insert con las páginas de hoy, así que la página 1 queda repartida entre news y tech."
+      },
+      "restate": {
+        "title": "Reescribe la historia",
+        "body": "Las visitas viejas de la página 1 siguen diciendo news. Reconstruye el destino para que todas las visitas estén bajo la sección de hoy y compruébalo.",
+        "view": "INSERT de una visita a la página 2",
+        "rebuild": "TRUNCATE + INSERT … SELECT con el JOIN",
+        "check": "SELECT page, section, sum(views)",
+        "success": "Para llevar un cambio de dimensión a la historia hay que recalcular (truncate + backfill), o usar una MV refrescable o un diccionario para las búsquedas."
+      },
+      "check": {
+        "fires": {
+          "q": "Una MV hace SELECT FROM a JOIN b. ¿Los inserts en qué tabla la disparan?",
+          "left": "Solo en la de más a la izquierda (a)",
+          "both": "En las dos",
+          "right": "Solo en b",
+          "why": "Solo la de más a la izquierda."
+        },
+        "dim": {
+          "q": "Actualizas la tabla de dimensión de una MV con JOIN. Las filas que ya están en el destino…",
+          "nothing": "Se quedan como estaban",
+          "rewrite": "Se reescriben",
+          "error": "Quedan inválidas",
+          "why": "No les pasa nada."
+        },
+        "populate": {
+          "q": "¿La forma más segura de rellenar el destino de una MV?",
+          "insertSelect": "INSERT INTO destino SELECT … FROM origen",
+          "populate": "CREATE … POPULATE",
+          "recreate": "Borrar y recrear la MV",
+          "why": "POPULATE puede perder filas insertadas mientras corre."
+        },
+        "alt": {
+          "q": "La dimensión cambia a menudo y la historia debe seguirla. ¿Mejor opción?",
+          "refreshable": "Una MV refrescable que recalcula el JOIN",
+          "bigger": "Bloques de insert más grandes",
+          "final": "SELECT … FINAL sobre el destino",
+          "why": "Un refresco vuelve a ejecutar toda la consulta con la dimensión de hoy."
+        }
+      }
+    },
+    "8-4": {
+      "title": "MVs refrescables",
+      "summary": "Volver a ejecutar la consulta entera cada cierto tiempo y cambiar el resultado de golpe.",
+      "halls": {
+        "src": "page_views · origen",
+        "dim": "pages · dimensión",
+        "mv": "views_by_section · destino"
+      },
+      "brief": {
+        "title": "Una consulta con temporizador",
+        "body": "Una MV <b>refrescable</b> (lista para producción desde 24.10) no reacciona a los inserts. <code>REFRESH EVERY 1 HOUR</code> vuelve a ejecutar la <b>consulta entera</b> y <b>reemplaza el destino de forma atómica</b> (o añade, con APPEND). Entre refrescos el destino está <b>desactualizado</b>. Encaja con JOINs de dimensiones que cambian y con agregaciones pesadas."
+      },
+      "between": {
+        "q": "Llega una visita nueva entre dos refrescos. ¿Está en views_by_section?",
+        "no": "No, hasta el siguiente refresco",
+        "yes": "Sí, al instante",
+        "why": "No: una MV refrescable solo escribe cuando refresca."
+      },
+      "refresh": {
+        "q": "Corre el refresco. ¿Cuántas parts tiene el destino después?",
+        "why": "1: el resultado completo sustituye al contenido viejo de una vez."
+      },
+      "fresh": {
+        "title": "Suficientemente fresco",
+        "body": "La página 2 pasa a tech y llegan visitas nuevas. Haz que el destino refleje las dos cosas.",
+        "dim": "Página 2 → tech",
+        "views": "INSERT de visitas nuevas",
+        "refresh": "SYSTEM REFRESH VIEW",
+        "select": "SELECT page, section, sum(views)",
+        "success": "El refresco lo recalculó todo con la dimensión de hoy. Cambias frescura (el intervalo) por sencillez."
+      },
+      "check": {
+        "how": {
+          "q": "Una MV refrescable…",
+          "rerun": "Vuelve a ejecutar la consulta entera cada cierto tiempo",
+          "incremental": "Procesa cada bloque insertado",
+          "trigger": "Se dispara con los cambios de la dimensión",
+          "why": "Consulta completa, programada (REFRESH EVERY / AFTER)."
+        },
+        "between": {
+          "q": "Entre refrescos, el destino está…",
+          "stale": "Posiblemente desactualizado",
+          "live": "Siempre al día",
+          "empty": "Vacío",
+          "why": "Muestra el último refresco."
+        },
+        "swap": {
+          "q": "Por defecto, un refresco escribe su resultado…",
+          "atomic": "Reemplazando el destino de forma atómica",
+          "partial": "Actualizando las filas que cambiaron",
+          "append": "Añadiendo",
+          "why": "Reemplazo atómico; APPEND es opcional."
+        },
+        "when": {
+          "q": "¿Cuándo encaja mejor una MV refrescable que una incremental?",
+          "joins": "JOINs con dimensiones que cambian, recálculos pesados",
+          "every": "Para cualquier contador por fila",
+          "never": "Nunca",
+          "why": "Cuando el resultado depende de algo más que el bloque más nuevo."
+        }
+      }
+    },
+    "8-5": {
+      "title": "El motor Kafka",
+      "summary": "Una tabla Kafka es un consumidor; at-least-once significa que puede haber duplicados.",
+      "topic": "topic: {rows, plural, one {# mensaje} other {# mensajes}}",
+      "brief": {
+        "title": "Un consumidor, no un almacén",
+        "body": "Una tabla con motor <code>Kafka</code> <b>no guarda nada</b>: es un consumidor que lee un topic. Una vista materializada mueve lo que lee a una tabla MergeTree: <b>tabla Kafka → MV → MergeTree</b>. La entrega es <b>at-least-once</b>: si el consumidor se cae después de escribir un lote pero antes de confirmar sus offsets, vuelve a leer ese lote."
+      },
+      "where": {
+        "q": "Llegan 4 mensajes y la MV los consume. ¿Dónde se guardan las filas?",
+        "target": "En la tabla MergeTree destino (events)",
+        "kafka": "En la tabla Kafka",
+        "both": "En las dos",
+        "why": "En el destino: la tabla Kafka solo lee el topic; volver a leerla no devuelve los mismos mensajes."
+      },
+      "crash": {
+        "q": "El consumidor escribe los mensajes 5–7 y se cae antes de confirmar. Tras reiniciar, ¿cuántas filas tienen id 5?",
+        "why": "2: el lote sin confirmar se vuelve a leer y a escribir. At-least-once."
+      },
+      "dedup": {
+        "title": "Duplicados bajo control",
+        "body": "Las caídas van a pasar. Elige un motor para el destino de forma que, leyendo con FINAL, cada mensaje salga una vez incluso tras una caída.",
+        "engine": "Motor del destino",
+        "engines": {
+          "MergeTree": "MergeTree",
+          "ReplacingMergeTree": "ReplacingMergeTree(id)"
+        },
+        "crash": "Mensajes + caída",
+        "final": "SELECT * FROM events (FINAL)",
+        "success": "Un ReplacingMergeTree con el id del mensaje en la clave hace inofensivas las repeticiones: FINAL (o los merges) dejan una fila por id."
+      },
+      "check": {
+        "stores": {
+          "q": "Una tabla con ENGINE = Kafka…",
+          "consumer": "Consume un topic y no guarda nada",
+          "storage": "Guarda los mensajes",
+          "cache": "Cachea los mensajes recientes",
+          "why": "Un consumidor; el almacenamiento es el destino de la MV."
+        },
+        "pipeline": {
+          "q": "La cadena habitual para ingerir de Kafka es…",
+          "kafkaMvTable": "Tabla Kafka → MV → MergeTree",
+          "kafkaTable": "Solo la tabla Kafka",
+          "tableKafka": "MergeTree → Kafka",
+          "why": "La MV mueve las filas del consumidor al almacenamiento."
+        },
+        "delivery": {
+          "q": "¿Qué garantía de entrega tiene el motor Kafka?",
+          "atLeast": "At-least-once (al menos una vez)",
+          "exactly": "Exactly-once",
+          "atMost": "At-most-once",
+          "why": "At-least-once: cuenta con duplicados."
+        },
+        "dups": {
+          "q": "Se escribe un lote de {n} mensajes, el consumidor se cae antes de confirmar y se vuelve a leer. ¿Cuántas filas de ese lote hay en un destino MergeTree normal?",
+          "why": "{n} × 2 = {total}."
+        }
+      }
     }
   },
   "map": {
@@ -2007,6 +2304,10 @@
     "w7": {
       "title": "Saltar y proyectar",
       "body": "Índices de salto (minmax, set, bloom_filter), GRANULARITY, proyecciones y la query condition cache."
+    },
+    "w8": {
+      "title": "Vistas materializadas",
+      "body": "MVs incrementales como triggers de insert, filas parciales en el destino, JOINs, backfills, MVs refrescables y el motor Kafka."
     }
   },
   "code": {

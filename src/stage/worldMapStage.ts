@@ -59,6 +59,11 @@ PLOTS[7] = [
   { pack: "factory", name: "conveyor-bars-stripe-high", x: 2.0, z: 0.9, s: 0.9 },
   { pack: "city", name: "detail-tank", x: -2.1, z: 0.8, s: 1.2 },
 ];
+PLOTS[8] = [
+  { pack: "city", name: "building-n", x: 0, z: -0.6, s: 2.1 },
+  { pack: "factory", name: "conveyor-long-stripe", x: 2.0, z: 0.9, ry: Math.PI / 2, s: 0.8 },
+  { pack: "city", name: "detail-tank-large", x: -2.1, z: 0.8, s: 1.1 },
+];
 const UPCOMING = [
   { pack: "city" as Pack, name: "building-h", x: 0, z: -0.6, s: 2.0 },
   { pack: "factory" as Pack, name: "warning-orange", x: -1.8, z: 1.2, s: 1 },

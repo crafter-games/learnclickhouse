@@ -40,6 +40,8 @@ export type StageLabels = {
   rows: string;
   /** Partition hall sign (with the disk, for tiered storage). */
   hall?: (partition: string, disk?: string) => string;
+  /** Halls in this order (partitions that stand for tables: source first, target last). */
+  hallOrder?: string[];
   rejected?: string;
   duplicate?: string;
   /** Stamp when the hot disk has no room (tiered storage). */
@@ -88,6 +90,8 @@ export class DepotStage {
   private camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 200);
   private tweens = new Tweens();
   private pico = new Pico();
+  /** Extra Picos for parallel reads (max_threads > 1). */
+  private helpers: Pico[] = [];
   private sections: Section[] = [];
   private halls = new Map<string, Hall>();
   private aisleTags: HTMLElement[] = [];
@@ -167,8 +171,10 @@ export class DepotStage {
   /** Whether a part has a box in this column (patch parts: changed columns; projections: once built). */
   private hasBox(part: Part, g: number, c: number) {
     const col = this.columns[c];
-    if (part.patch) return part.data?.[g]?.[col.name] !== undefined;
+    // Parts of logical rows (and patch parts) only have boxes for the columns their rows carry
+    if (part.data) return part.data[g]?.[col.name] !== undefined;
     if (col.projection) return !!part.projections?.[col.projection];
+    if (col.only) return col.only.includes(part.partition);
     return true;
   }
   private rackZ(c: number) {
@@ -218,7 +224,14 @@ export class DepotStage {
   }
   /** Sections in shelf order: by partition, then by block number. */
   private sortSections() {
-    this.sections.sort((a, b) => (a.part.partition < b.part.partition ? -1 : a.part.partition > b.part.partition ? 1 : a.part.minBlock - b.part.minBlock));
+    const order = this.text.hallOrder ?? [];
+    const rank = (p: string) => (order.includes(p) ? order.indexOf(p) : order.length);
+    this.sections.sort((a, b) => {
+      const pa = a.part.partition;
+      const pb = b.part.partition;
+      if (pa !== pb) return rank(pa) - rank(pb) || (pa < pb ? -1 : 1);
+      return a.part.minBlock - b.part.minBlock;
+    });
   }
   /** Where every section starts, with a wider gap between partitions. */
   private computeLayout() {
@@ -885,7 +898,8 @@ export class DepotStage {
    * Pico walks only the racks holding boxes the query reads. In each aisle the boxes the index
    * rules out grey out in a sweep, and Pico drives straight to the ones it must open.
    */
-  playQuery(result: QueryResult): Promise<void> {
+  playQuery(result: QueryResult, opts: { threads?: number } = {}): Promise<void> {
+    if ((opts.threads ?? 1) > 1) return this.playParallel(result, opts.threads!);
     return this.queue(async () => {
       this.resetBoxStates();
       const isRead = new Set(result.boxes.filter((b) => b.read).map((b) => `${b.part}/${b.granule}/${b.column}`));
@@ -946,6 +960,68 @@ export class DepotStage {
     });
   }
 
+  /**
+   * max_threads > 1: the granules to read are split into contiguous ranges, one per thread, and a
+   * Pico per thread reads its range aisle by aisle, all at once.
+   */
+  private playParallel(result: QueryResult, threads: number): Promise<void> {
+    return this.queue(async () => {
+      this.resetBoxStates();
+      const isRead = new Set(result.boxes.filter((b) => b.read).map((b) => `${b.part}/${b.granule}/${b.column}`));
+      const cells = this.sections.flatMap((s) => s.boxes.map((b) => ({ s, b, read: isRead.has(`${s.part.name}/${b.granule}/${this.columns[b.column].name}`), ...this.slot(s.x0, b.granule, b.column) })));
+      const lines = new Set(cells.filter((c) => c.read).map((c) => c.line));
+      this.columns.forEach((_, c) => {
+        this.aisleTags[c].classList.toggle("is-dim", !lines.has(c));
+        this.aisleTags[c].classList.toggle("is-on", lines.has(c));
+      });
+      cells.filter((c) => !c.read).forEach((c, i) => void wait(i * 6).then(() => this.setBox(c.b, "skipped")));
+      if (cells.some((c) => !c.read)) this.options.onSound?.("skip");
+      // Contiguous granule ranges (by shelf position), one per thread
+      const xs = [...new Set(cells.filter((c) => c.read).map((c) => c.x))].sort((a, b) => a - b);
+      const per = Math.ceil(xs.length / threads);
+      const zones = Array.from({ length: threads }, (_, k) => new Set(xs.slice(k * per, (k + 1) * per))).filter((z) => z.size);
+      while (this.helpers.length < zones.length - 1) {
+        const h = new Pico();
+        h.root.scale.setScalar(0.001);
+        this.scene.add(h.root);
+        this.helpers.push(h);
+      }
+      const workers = [this.pico, ...this.helpers.slice(0, zones.length - 1)];
+      await Promise.all(
+        workers.map(async (who, k) => {
+          const mine = cells.filter((c) => c.read && zones[k].has(c.x));
+          const myLines = [...new Set(mine.map((c) => c.line))].sort((a, b) => a - b);
+          who.setFace("focus");
+          let n = 0;
+          for (const line of myLines) {
+            const run = mine.filter((c) => c.line === line).sort((a, b) => a.x - b.x);
+            const start = new THREE.Vector3(run[0].x - 0.5, 0, this.walkZ(line));
+            if (who === this.pico) await this.travel(start);
+            else {
+              // Helpers pop in where their range starts and out when done with an aisle
+              who.root.position.copy(start);
+              who.root.rotation.y = Math.PI / 2;
+              await this.tweens.to(who.root.scale, { x: 0.85, y: 0.85, z: 0.85 }, 180, easeOutBack);
+            }
+            for (const c of run) {
+              await this.driveTo(new THREE.Vector3(c.x, 0, this.walkZ(line)), true, who);
+              this.setBox(c.b, "read");
+              who.flash(true);
+              this.options.onSound?.("read", n++);
+              await wait(140);
+              who.flash(false);
+            }
+            if (who !== this.pico) await this.tweens.to(who.root.scale, { x: 0.001, y: 0.001, z: 0.001 }, 160, easeInOutCubic);
+          }
+        }),
+      );
+      this.pico.setFace("happy");
+      await this.travel(this.homePos);
+      await this.tweens.to(this.pico.root.rotation, { y: Math.PI / 2 }, 200, easeInOutCubic);
+      this.refit();
+    });
+  }
+
   setFace(face: Face) {
     this.pico.setFace(face);
   }
@@ -954,32 +1030,32 @@ export class DepotStage {
    * Drive along the warehouse's aisles only: to change walkway, go to the nearer cross aisle,
    * along it, then into the target walkway — never diagonally through racks.
    */
-  private async travel(to: THREE.Vector3) {
-    const p = this.pico.root.position.clone();
+  private async travel(to: THREE.Vector3, who = this.pico) {
+    const p = who.root.position.clone();
     if (Math.abs(p.z - to.z) > 0.05) {
       const cost = (x: number) => Math.abs(p.x - x) + Math.abs(to.x - x);
       const cross = cost(this.leftAisleX) <= cost(this.rightAisleX) ? this.leftAisleX : this.rightAisleX;
-      await this.driveTo(new THREE.Vector3(cross, 0, p.z));
-      await this.driveTo(new THREE.Vector3(cross, 0, to.z));
+      await this.driveTo(new THREE.Vector3(cross, 0, p.z), false, who);
+      await this.driveTo(new THREE.Vector3(cross, 0, to.z), false, who);
     }
-    await this.driveTo(to);
+    await this.driveTo(to, false, who);
   }
 
   /** Drive Pico to a point (turning first). `straight` skips the turn for runs along an aisle. */
-  private async driveTo(to: THREE.Vector3, straight = false) {
-    const from = this.pico.root.position.clone();
+  private async driveTo(to: THREE.Vector3, straight = false, who = this.pico) {
+    const from = who.root.position.clone();
     const d = from.distanceTo(to);
     if (d < 0.01) return;
     const heading = Math.atan2(to.x - from.x, to.z - from.z);
     if (!straight) {
-      let delta = heading - this.pico.root.rotation.y;
+      let delta = heading - who.root.rotation.y;
       delta = Math.atan2(Math.sin(delta), Math.cos(delta));
-      await this.tweens.to(this.pico.root.rotation, { y: this.pico.root.rotation.y + delta }, 160, easeInOutCubic);
-    } else this.pico.root.rotation.y = heading;
+      await this.tweens.to(who.root.rotation, { y: who.root.rotation.y + delta }, 160, easeInOutCubic);
+    } else who.root.rotation.y = heading;
     const ms = (d / DRIVE_SPEED) * 1000;
-    this.pico.speed = DRIVE_SPEED;
-    await this.tweens.progress(ms, (p) => this.pico.root.position.lerpVectors(from, to, p), straight ? (t) => t : easeInOutCubic);
-    this.pico.speed = 0;
+    who.speed = DRIVE_SPEED;
+    await this.tweens.progress(ms, (p) => who.root.position.lerpVectors(from, to, p), straight ? (t) => t : easeInOutCubic);
+    who.speed = 0;
   }
 
 
@@ -1079,6 +1155,7 @@ export class DepotStage {
     this.last = now;
     this.tweens.update(dt);
     this.pico.update(dt / 1000);
+    for (const h of this.helpers) h.update(dt / 1000);
     // Smoothly ease the camera toward the current shot (never snaps)
     const target = this.follow ? this.followShot() : this.camTarget;
     if (target) {

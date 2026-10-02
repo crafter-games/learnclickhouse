@@ -98,7 +98,7 @@ export class LevelSession {
         }
         this.stats.inserts++;
         this.changed();
-        await stage.deliver(part);
+        await stage.deliver(part, { quick: options.quick });
         return part;
       },
       show: async (spec, sql, transform) => {
@@ -106,7 +106,7 @@ export class LevelSession {
         if (transform && result.rows) result.rows = transform(result.rows);
         ctx.last = { spec, result, sql };
         this.stats.queries++;
-        await stage.playQuery(result);
+        await stage.playQuery(result, { threads: Number(ctx.settings.threads ?? 1) });
         this.changed();
         return result;
       },
@@ -227,7 +227,7 @@ export class LevelSession {
         const result = this.table.query(spec);
         ctx.last = { spec, result };
         this.stats.queries++;
-        await stage.playQuery(result);
+        await stage.playQuery(result, { threads: Number(ctx.settings.threads ?? 1) });
         this.changed();
         return result;
       },

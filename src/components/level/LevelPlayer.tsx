@@ -298,7 +298,7 @@ export function LevelPlayer({ level, onRestart }: { level: Level; onRestart: () 
             onReady={(s) => {
               session.attachStage({
                 deliver: (p, o) => s.deliver(p, o),
-                playQuery: (r) => s.playQuery(r),
+                playQuery: (r, o) => s.playQuery(r, o),
                 setLayout: (l) => s.setLayout(l),
                 setColumnSizes: (sz) => s.setColumnSizes(sz),
                 resetBoxes: () => s.resetBoxes(),
@@ -320,11 +320,12 @@ export function LevelPlayer({ level, onRestart }: { level: Level; onRestart: () 
               part: (name) => name,
               dock: ts("dock"),
               rows: ts("rows", { table: table.spec.name }),
-              hall: (p, disk) => (disk ? ts("hallDisk", { p, disk: ts(`disk.${disk}`) }) : ts("hall", { p })),
+              hall: (p, disk) => (level.halls?.includes(p) ? tl(`${level.id}.halls.${p}`) : disk ? ts("hallDisk", { p, disk: ts(`disk.${disk}`) }) : ts("hall", { p })),
               rejected: ts("rejected"),
               duplicate: ts("duplicate"),
               full: ts("full"),
-              buffer: (rows) => ts("buffer", { rows }),
+              hallOrder: level.halls,
+              buffer: (rows) => (level.bufferLabel ? tl(level.bufferLabel, { rows }) : ts("buffer", { rows })),
             }}
           />
         </section>
