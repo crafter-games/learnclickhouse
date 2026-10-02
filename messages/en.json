@@ -70,7 +70,8 @@
     "remedial": "You need 80% to unlock the next level. Try again: the questions change their numbers.",
     "retryCheck": "Retry with new numbers",
     "nextLevel": "Next",
-    "restart": "Restart level"
+    "restart": "Restart level",
+    "finale": "See the ending"
   },
   "panels": {
     "reading": "What Pico read",
@@ -1154,7 +1155,9 @@
     },
     "shift": {
       "title": "Morning shift"
-    }
+    },
+    "exam": "Final exam",
+    "certificate": "Certificate"
   },
   "code": {
     "button": "Code",
@@ -1191,5 +1194,42 @@
     "start": "Start the shift",
     "practice": "Practise the weakest ones",
     "why": "Why? Recalling something right when you're about to forget it is one of the most effective ways to make it stick (spaced retrieval practice)."
+  },
+  "exam": {
+    "title": "Final exam",
+    "back": "Back to the map",
+    "introTitle": "{n} questions, every world mixed",
+    "introBody": "Questions come from the {worlds, plural, one {# world} other {# worlds}} you've played, mixed together, with new numbers every time. Get {pass} right to pass. No depot in sight: all from memory.",
+    "emptyTitle": "Play a level first",
+    "emptyBody": "The exam asks about the worlds you've played. Finish a level and come back.",
+    "best": "Your best: {best}/{total}",
+    "start": "Start the exam",
+    "retry": "Try again",
+    "passed": "Passed!",
+    "failed": "Not yet",
+    "passedBody": "You know how ClickHouse stores and reads data. Your certificate now carries the exam seal.",
+    "failedBody": "The red bars show where to go back. Replay those levels or do a Morning shift, then try again.",
+    "certificate": "See your certificate",
+    "map": "World map"
+  },
+  "finale": {
+    "back": "Back to the map",
+    "title": "Depot master!",
+    "body": "Every world, every level. You've run the depot from the first column to the last partition.",
+    "nameLabel": "Name on the certificate",
+    "namePlaceholder": "Your name",
+    "kicker": "Learn ClickHouse · unofficial",
+    "certTitle": "Certificate of completion",
+    "awardedTo": "This certifies that",
+    "anonymous": "A brave depot keeper",
+    "certBody": "has completed the {worlds} worlds and {levels} levels of Column Depot.",
+    "examPassed": "Final exam passed: {best}/{total}",
+    "examTip": "Pass the final exam to add its seal",
+    "madeBy": "Made by Jibaru",
+    "download": "Download certificate (PNG)",
+    "exam": "Final exam",
+    "map": "World map",
+    "lockedTitle": "Almost there",
+    "lockedBody": "{n, plural, one {# level} other {# levels}} left until your certificate."
   }
 }

@@ -18,6 +18,16 @@ pnpm lint
 node scripts/gen-sfx.mjs   # regenerate the synthesized sound effects
 ```
 
-Stack: Next.js 16, next-intl (en/es), Three.js with Kenney models (CC0, see [`CREDITS.md`](CREDITS.md)), Tone.js generative music, Howler SFX.
+### Playtests
+
+The game exposes `window.__TEST__`; `playtest/driver.js` autoplays a level (predictions, tasks via each step's `solution`, recall check).
+
+```bash
+node playtest/make-level-scripts.mjs 1-1 2-3 4-4        # writes playtest/scripts/level-<id>.json
+node ~/.claude/skills/game-playtest/scripts/playtest-web.mjs playtest/scripts/level-2-3.json --url http://localhost:3000
+node playtest/make-m4.mjs                                # exam → finale → certificate PNG
+```
+
+Stack: Next.js 16, next-intl (en/es), Three.js with Kenney models, music by Juhani Junkala (all CC0, see [`CREDITS.md`](CREDITS.md)), Howler for audio.
 
 Made by [Jibaru](https://github.com/Jibaru).

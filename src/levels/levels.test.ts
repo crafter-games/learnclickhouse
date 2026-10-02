@@ -72,3 +72,19 @@ describe("world 1 facts", () => {
     expect(light).toEqual(["date+city"]);
   });
 });
+
+describe("final exam", () => {
+  it("draws 20 questions spread across every completed world", async () => {
+    const { buildExam } = await import(".");
+    const { questions, worlds } = buildExam(ALL_LEVELS.map((l) => l.id), 7);
+    expect(questions).toHaveLength(20);
+    expect(new Set(worlds).size).toBe(4);
+    for (const w of [1, 2, 3, 4]) expect(worlds.filter((x) => x === w).length).toBeGreaterThanOrEqual(4);
+  });
+  it("only asks about played levels", async () => {
+    const { buildExam } = await import(".");
+    const { worlds } = buildExam(["1-1", "1-2"], 3);
+    expect(worlds.every((w) => w === 1)).toBe(true);
+    expect(worlds.length).toBe(8);
+  });
+});

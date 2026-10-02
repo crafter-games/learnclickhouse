@@ -441,6 +441,11 @@ export function LevelPlayer({ level, onRestart }: { level: Level; onRestart: () 
                   {t("nextLevel")}: {tl(upNext.title.key)}
                   <ArrowRight weight="bold" />
                 </Link>
+              ) : stars > 0 && !upNext ? (
+                <Link href="/finale" className={gameButtonClass({ variant: "primary", size: "lg" })}>
+                  {t("finale")}
+                  <ArrowRight weight="bold" />
+                </Link>
               ) : stars === 0 ? (
                 <button
                   type="button"

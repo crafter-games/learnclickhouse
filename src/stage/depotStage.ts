@@ -103,6 +103,8 @@ export class DepotStage {
   private busy = Promise.resolve();
   private deliveries = new Map<string, Promise<void>>();
   private layout: Layout;
+  /** prefers-reduced-motion: no follow camera, shorter flights. */
+  private reduced = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
   readonly ready: Promise<void>;
 
   constructor(
@@ -627,6 +629,10 @@ export class DepotStage {
   }
 
   private async fly(b: Box, from: THREE.Vector3, to: THREE.Vector3, ms = 520, arc = 1.6) {
+    if (this.reduced) {
+      ms *= 0.4;
+      arc = 0;
+    }
     await this.tweens.progress(ms, (p) => {
       b.obj.position.lerpVectors(from, to, p);
       b.obj.position.y += Math.sin(Math.PI * p) * arc;
@@ -766,7 +772,7 @@ export class DepotStage {
       else this.rowTag?.inner.classList.add("is-on");
       if (this.layout === "columns" && lines.length < this.columns.length) this.options.onSound?.("skip");
       this.pico.setFace("focus");
-      this.follow = true;
+      this.follow = !this.reduced;
       await wait(250);
 
       // Zig-zag like a real picker: one aisle left → right, the next one back

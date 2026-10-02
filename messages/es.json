@@ -70,7 +70,8 @@
     "remedial": "Necesitas 80% para desbloquear el siguiente nivel. Inténtalo otra vez: las preguntas cambian sus números.",
     "retryCheck": "Reintentar con números nuevos",
     "nextLevel": "Siguiente",
-    "restart": "Reiniciar nivel"
+    "restart": "Reiniciar nivel",
+    "finale": "Ver el final"
   },
   "panels": {
     "reading": "Lo que leyó Pico",
@@ -1154,7 +1155,9 @@
     },
     "shift": {
       "title": "Turno de mañana"
-    }
+    },
+    "exam": "Examen final",
+    "certificate": "Certificado"
   },
   "code": {
     "button": "Código",
@@ -1191,5 +1194,42 @@
     "start": "Empezar el turno",
     "practice": "Practicar los más débiles",
     "why": "¿Para qué? Recordar algo justo cuando estás a punto de olvidarlo es una de las formas más eficaces de fijarlo (práctica de recuperación espaciada)."
+  },
+  "exam": {
+    "title": "Examen final",
+    "back": "Volver al mapa",
+    "introTitle": "{n} preguntas, todos los mundos mezclados",
+    "introBody": "Las preguntas salen de los {worlds, plural, one {# mundo} other {# mundos}} que has jugado, mezcladas y con números nuevos cada vez. Acierta {pass} para aprobar. Sin almacén a la vista: todo de memoria.",
+    "emptyTitle": "Juega un nivel primero",
+    "emptyBody": "El examen pregunta por los mundos que has jugado. Termina un nivel y vuelve.",
+    "best": "Tu mejor resultado: {best}/{total}",
+    "start": "Empezar el examen",
+    "retry": "Intentar de nuevo",
+    "passed": "¡Aprobado!",
+    "failed": "Todavía no",
+    "passedBody": "Sabes cómo ClickHouse guarda y lee los datos. Tu certificado ya lleva el sello del examen.",
+    "failedBody": "Las barras rojas te dicen a dónde volver. Repite esos niveles o haz un Turno de mañana, y vuelve a intentarlo.",
+    "certificate": "Ver tu certificado",
+    "map": "Mapa del mundo"
+  },
+  "finale": {
+    "back": "Volver al mapa",
+    "title": "¡Maestro del almacén!",
+    "body": "Todos los mundos, todos los niveles. Has dirigido el almacén desde la primera columna hasta la última partición.",
+    "nameLabel": "Nombre en el certificado",
+    "namePlaceholder": "Tu nombre",
+    "kicker": "Aprende ClickHouse · no oficial",
+    "certTitle": "Certificado de finalización",
+    "awardedTo": "Se certifica que",
+    "anonymous": "Un valiente jefe de almacén",
+    "certBody": "ha completado los {worlds} mundos y {levels} niveles de Column Depot.",
+    "examPassed": "Examen final aprobado: {best}/{total}",
+    "examTip": "Aprueba el examen final para añadir su sello",
+    "madeBy": "Hecho por Jibaru",
+    "download": "Descargar certificado (PNG)",
+    "exam": "Examen final",
+    "map": "Mapa del mundo",
+    "lockedTitle": "Ya casi",
+    "lockedBody": "Te {n, plural, one {falta # nivel} other {faltan # niveles}} para tu certificado."
   }
 }
