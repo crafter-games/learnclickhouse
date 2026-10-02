@@ -135,16 +135,20 @@ export class WorldMapStage {
     }
     // Background scenery behind the plots: a row of pale buildings and chimneys
     const backdrop = ["building-a", "building-d", "building-m", "building-c", "building-g", "building-b"];
-    let k = 0;
-    for (let x = x0 + 2; x < x1 - 1; x += 2.8) {
-      const b = await model("city", backdrop[k++ % backdrop.length], true);
-      b.position.set(x, 0, -6.2);
-      b.scale.setScalar(1.25);
-      for (const m of materialsOf(b)) m.color.lerp(new THREE.Color(0xe4def3), 0.72);
-      this.scene.add(b);
-    }
-
-    for (const [i, spec] of this.specs.entries()) this.plots.push(await this.buildPlot(i, spec));
+    // Everything loads in parallel (over the network, one-by-one awaits add up)
+    const xs: number[] = [];
+    for (let x = x0 + 2; x < x1 - 1; x += 2.8) xs.push(x);
+    const scenery = Promise.all(
+      xs.map(async (x, k) => {
+        const b = await model("city", backdrop[k % backdrop.length], true);
+        b.position.set(x, 0, -6.2);
+        b.scale.setScalar(1.25);
+        for (const m of materialsOf(b)) m.color.lerp(new THREE.Color(0xe4def3), 0.72);
+        this.scene.add(b);
+      }),
+    );
+    this.plots = await Promise.all(this.specs.map((spec, i) => this.buildPlot(i, spec)));
+    await scenery;
 
     // Trucks driving both ways
     for (const [dir, z] of [[1, ROAD_Z + 0.5], [-1, ROAD_Z - 0.5]] as const) {
@@ -176,14 +180,16 @@ export class WorldMapStage {
     ring.visible = false;
     group.add(ring);
 
-    for (const p of PLOTS[spec.id] ?? UPCOMING) {
-      const m = await model(p.pack, p.name, spec.locked);
-      m.position.set(p.x, 0.11, p.z);
-      m.rotation.y = p.ry ?? 0;
-      m.scale.setScalar(p.s ?? 1);
-      if (spec.locked) for (const mat of materialsOf(m)) mat.color.lerp(new THREE.Color(0xc9c6da), 0.6);
-      group.add(m);
-    }
+    await Promise.all(
+      (PLOTS[spec.id] ?? UPCOMING).map(async (p) => {
+        const m = await model(p.pack, p.name, spec.locked);
+        m.position.set(p.x, 0.11, p.z);
+        m.rotation.y = p.ry ?? 0;
+        m.scale.setScalar(p.s ?? 1);
+        if (spec.locked) for (const mat of materialsOf(m)) mat.color.lerp(new THREE.Color(0xc9c6da), 0.6);
+        group.add(m);
+      }),
+    );
 
     // Completion flags along the front edge
     const flags = Math.round(spec.progress * 5);

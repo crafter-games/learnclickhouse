@@ -215,7 +215,17 @@ export class DepotStage {
     this.scene.add(new THREE.LineSegments(jointGeo, new THREE.LineBasicMaterial({ color: 0xc9c3de })));
 
     // Back wall with windows, behind the first rack
-    const [wall, windowWide] = await Promise.all([model("factory", "structure-wall"), model("factory", "structure-window-wide")]);
+    // Warm up every model this scene uses in one parallel batch
+    const [wall, windowWide] = await Promise.all([
+      model("factory", "structure-wall"),
+      model("factory", "structure-window-wide"),
+      model("factory", "structure-yellow-medium"),
+      model("factory", "hopper-high-square"),
+      model("factory", "box-small"),
+      model("factory", "conveyor-bars-high"),
+      model("factory", "structure-yellow-short"),
+      model("car", "delivery"),
+    ]);
     for (let x = x0 + 1; x < x1; x += 2) {
       if (Math.round((x - x0) / 2) % 3 === 1) {
         const w = windowWide.clone();
