@@ -1,7 +1,7 @@
 // Builds playtest/scripts/m4-end.json: full progress → exam (autoplayed) → finale → certificate PNG.
 import { writeFileSync } from "node:fs";
 const levels = {};
-for (const [w, n] of [[1, 4], [2, 5], [3, 5], [4, 4]]) for (let i = 1; i <= n; i++) levels[`${w}-${i}`] = { stars: 3, attempts: 1 };
+for (const [w, n] of [[1, 4], [2, 5], [3, 5], [4, 4], [5, 5], [6, 5], [7, 5], [8, 5], [9, 5], [10, 5], [11, 5]]) for (let i = 1; i <= n; i++) levels[`${w}-${i}`] = { stars: 3, attempts: 1 };
 const state = JSON.stringify({ state: { levels, concepts: {}, shifts: [], exam: null, name: "Ada Lovelace" }, version: 1 });
 const setup = `localStorage.setItem("column-depot:progress", ${JSON.stringify(state)}); location.href = "/es/exam";`;
 const examRun = `(async () => {

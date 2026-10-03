@@ -2,7 +2,7 @@
 
 A 3D warehouse game that teaches how ClickHouse really stores and reads data. Unofficial; ClickHouse is a trademark of ClickHouse, Inc.
 
-11 worlds, 55 levels:
+11 worlds, 53 levels:
 
 1. Columns · 2. Inserts, parts & merges · 3. ORDER BY & the sparse index · 4. Partitions
 5. Merge-time engines (Replacing, Summing, Aggregating, Collapsing)
